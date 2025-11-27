@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="epistery-access" content="required">
+  <title>Message Board</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="http://localhost:4080/agent/epistery/white-list/client.js"></script>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Message Board</h1>
+      <p class="subtitle">Powered by Epistery & White-list Agent</p>
+      <div id="user-status" class="user-status"></div>
+    </header>
+
+    <div class="new-post-form">
+      <textarea id="post-text" placeholder="What's on your mind?" rows="3"></textarea>
+      <div class="form-actions">
+        <label class="image-upload">
+          <input type="file" id="image-input" accept="image/*">
+          <span>📷 Add Image</span>
+        </label>
+        <button id="post-button">Post</button>
+      </div>
+      <img id="image-preview" class="image-preview" style="display: none;">
+    </div>
+
+    <div id="posts-container" class="posts-container"></div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
