@@ -55,8 +55,10 @@ function checkAuthStatus() {
     currentUser = { address };
   } else {
     statusEl.className = 'user-status guest';
+    const currentDomain = window.location.hostname;
+    const returnUrl = encodeURIComponent(window.location.href);
     statusEl.innerHTML = `
-      👁️ Viewing as guest - <a href="/.well-known/epistery/delegate" style="color: inherit; text-decoration: underline;">Sign in</a> to post
+      👁️ Viewing as guest - <a href="/.well-known/epistery/delegate?domain=${currentDomain}&return=${returnUrl}" style="color: inherit; text-decoration: underline;">Sign in</a> to post
     `;
   }
 }
