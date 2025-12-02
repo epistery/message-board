@@ -44,11 +44,10 @@ function checkAuthStatus() {
 
   if (token && token.delegation) {
     const address = token.delegation.subject;
-    const shortAddress = address.substring(0, 8) + '...' + address.substring(address.length - 6);
 
     statusEl.className = 'user-status authenticated';
     statusEl.innerHTML = `
-      ✓ Authenticated as <strong>${shortAddress}</strong>
+      ✓ Authenticated as <strong class="clickable-address" onclick="copyAddress('${address}')" style="cursor: pointer; text-decoration: underline;" title="Click to copy">${address}</strong>
       <span style="margin-left: 10px; font-size: 12px; opacity: 0.8;">You can post and comment</span>
     `;
 
