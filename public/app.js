@@ -1,222 +1,254 @@
-// Cache for posts with service worker integration
-let postsCache = [];
+// Message Board Client Application
+let posts = [];
 let ws = null;
 let currentUser = null;
 
-// Initialize app
+// Initialize
 async function init() {
-  console.log('[init] Starting app initialization');
-  console.log('[init] episteryWhiteList loaded:', !!window.episteryWhiteList);
-  console.log('[init] episteryAccess:', window.episteryAccess);
+  console.log('[message-board] Initializing...');
 
-  // Register service worker
-  if ('serviceWorker' in navigator) {
-    try {
-      await navigator.serviceWorker.register('/sw.js');
-      console.log('Service Worker registered');
-    } catch (error) {
-      console.error('Service Worker registration failed:', error);
-    }
-  }
-
-  // Setup epistery event listeners
-  setupEpisteryListeners();
-
-  // Load initial posts
+  // Load posts
   await loadPosts();
 
-  // Connect WebSocket
+  // Connect WebSocket for real-time updates
   connectWebSocket();
 
   // Setup event listeners
   setupEventListeners();
 
-  // Periodically update status in case token state changes
-  setInterval(() => {
-    updateUserStatus();
-  }, 2000);
+  // Check authentication status
+  checkAuthStatus();
 
-  console.log('[init] Initialization complete');
+  console.log('[message-board] Ready');
 }
 
-// Setup epistery white-list event listeners
-function setupEpisteryListeners() {
-  // Check if already authenticated (from white-list client.js)
-  if (window.episteryAccess) {
-    currentUser = window.episteryAccess;
-    updateUserStatus();
-    console.log('Initial access state:', window.episteryAccess);
-  }
+// Check authentication and update UI
+function checkAuthStatus() {
+  // Check for delegation token in cookies
+  const cookies = document.cookie.split(';');
+  let token = null;
 
-  window.addEventListener('epistery:access-granted', (e) => {
-    currentUser = e.detail;
-    updateUserStatus();
-    console.log('Access granted:', e.detail);
-  });
-
-  window.addEventListener('epistery:access-denied', (e) => {
-    currentUser = null;
-    updateUserStatus();
-    console.log('Access denied:', e.detail);
-  });
-
-  window.addEventListener('epistery:passive-mode', (e) => {
-    currentUser = null;
-    updateUserStatus();
-    console.log('Passive mode:', e.detail);
-  });
-}
-
-// Update user status display
-function updateUserStatus(message = '') {
-  const statusEl = document.getElementById('user-status');
-  statusEl.innerHTML = ''; // Clear previous content
-
-  // Get current token to verify we have it
-  const token = window.episteryWhiteList?.getDelegationToken();
-
-  if (currentUser && currentUser.address) {
-    // Show full address for authenticated users
-    const addressSpan = document.createElement('span');
-    addressSpan.className = 'user-address';
-    addressSpan.textContent = `Signed in as ${currentUser.address}`;
-    statusEl.appendChild(addressSpan);
-
-    console.log('[status] Current user:', currentUser.address);
-    console.log('[status] Has delegation token:', !!token);
-  } else if (token && token.delegation) {
-    // Have token but no user object - extract from token
-    const addressSpan = document.createElement('span');
-    addressSpan.className = 'user-address';
-    addressSpan.textContent = `Signed in as ${token.delegation.subject}`;
-    statusEl.appendChild(addressSpan);
-
-    console.log('[status] Signed in via token:', token.delegation.subject);
-  } else {
-    statusEl.textContent = message || 'Not signed in';
-    console.log('[status] No authentication');
-  }
-
-  // Add sign-in button if not authenticated
-  if (!currentUser && !token) {
-    const signInBtn = document.createElement('button');
-    signInBtn.textContent = 'Sign In';
-    signInBtn.className = 'sign-in-button';
-    signInBtn.onclick = () => {
-      console.log('[sign-in] Button clicked');
-      console.log('[sign-in] episteryWhiteList available:', !!window.episteryWhiteList);
-
-      if (window.episteryWhiteList) {
-        console.log('[sign-in] Calling requestDelegation...');
-        try {
-          window.episteryWhiteList.requestDelegation();
-        } catch (error) {
-          console.error('[sign-in] Error calling requestDelegation:', error);
-          alert('Failed to initiate sign-in: ' + error.message);
-        }
-      } else {
-        console.error('[sign-in] episteryWhiteList not available');
-        alert('Authentication system not loaded. Please refresh the page.');
+  for (let cookie of cookies) {
+    const [name, value] = cookie.trim().split('=');
+    if (name === 'epistery_delegation') {
+      try {
+        token = JSON.parse(decodeURIComponent(value));
+        break;
+      } catch (e) {
+        console.error('[message-board] Failed to parse delegation token:', e);
       }
-    };
-    statusEl.appendChild(signInBtn);
+    }
+  }
+
+  const statusEl = document.getElementById('user-status');
+
+  if (token && token.delegation) {
+    const address = token.delegation.subject;
+    const shortAddress = address.substring(0, 8) + '...' + address.substring(address.length - 6);
+
+    statusEl.className = 'user-status authenticated';
+    statusEl.innerHTML = `
+      ✓ Authenticated as <strong>${shortAddress}</strong>
+      <span style="margin-left: 10px; font-size: 12px; opacity: 0.8;">You can post and comment</span>
+    `;
+
+    currentUser = { address };
+  } else {
+    statusEl.className = 'user-status guest';
+    statusEl.innerHTML = `
+      👁️ Viewing as guest - <a href="/.well-known/epistery/delegate" style="color: inherit; text-decoration: underline;">Sign in</a> to post
+    `;
   }
 }
 
-// Shorten Ethereum address for display
-function shortenAddress(address) {
-  if (!address) return 'anonymous';
-  if (address.startsWith('anonymous')) return 'anonymous';
-  return `${address.slice(0, 6)}...${address.slice(-4)}`;
-}
-
-// Load posts from server
+// Load posts from API
 async function loadPosts() {
   try {
-    const response = await fetch('/api/posts');
-    postsCache = await response.json();
-    renderPosts();
+    const response = await fetch('/agent/epistery/message-board/api/posts');
+    if (!response.ok) throw new Error('Failed to load posts');
 
-    // Update service worker cache
-    if (navigator.serviceWorker.controller) {
-      navigator.serviceWorker.controller.postMessage({
-        type: 'UPDATE_CACHE',
-        posts: postsCache
-      });
-    }
+    posts = await response.json();
+    renderPosts();
   } catch (error) {
-    console.error('Failed to load posts:', error);
-    // Try to load from service worker cache
-    loadFromCache();
+    console.error('[message-board] Load error:', error);
+    showError('Failed to load posts: ' + error.message);
   }
 }
 
-// Load posts from service worker cache
-async function loadFromCache() {
-  if (!navigator.serviceWorker.controller) return;
+// Render posts
+function renderPosts() {
+  const container = document.getElementById('posts-container');
 
-  navigator.serviceWorker.controller.postMessage({ type: 'GET_CACHE' });
-}
-
-// Listen for cache updates from service worker
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.addEventListener('message', (event) => {
-    if (event.data.type === 'CACHED_POSTS') {
-      postsCache = event.data.posts || [];
-      renderPosts();
-    }
-  });
-}
-
-// Connect to WebSocket
-function connectWebSocket() {
-  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  ws = new WebSocket(`${protocol}//${location.host}`);
-
-  ws.onopen = () => {
-    console.log('WebSocket connected');
-  };
-
-  ws.onmessage = (event) => {
-    const message = JSON.parse(event.data);
-    handleWebSocketMessage(message);
-  };
-
-  ws.onclose = () => {
-    console.log('WebSocket disconnected, reconnecting...');
-    setTimeout(connectWebSocket, 3000);
-  };
-
-  ws.onerror = (error) => {
-    console.error('WebSocket error:', error);
-  };
-}
-
-// Handle WebSocket messages
-function handleWebSocketMessage(message) {
-  if (message.type === 'new-post') {
-    postsCache.unshift(message.post);
-    renderPosts();
-    updateServiceWorkerCache();
-  } else if (message.type === 'new-comment') {
-    const post = postsCache.find(p => p.id === message.postId);
-    if (post) {
-      post.comments.push(message.comment);
-      renderPosts();
-      updateServiceWorkerCache();
-    }
+  if (posts.length === 0) {
+    container.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-state-icon">💬</div>
+        <p>No posts yet. Be the first to post!</p>
+      </div>
+    `;
+    return;
   }
+
+  container.innerHTML = posts.map(post => renderPost(post)).join('');
 }
 
-// Update service worker cache
-function updateServiceWorkerCache() {
-  if (navigator.serviceWorker.controller) {
-    navigator.serviceWorker.controller.postMessage({
-      type: 'UPDATE_CACHE',
-      posts: postsCache
+// Render single post
+function renderPost(post) {
+  const date = new Date(post.timestamp);
+  const timeAgo = getTimeAgo(date);
+  const shortAddress = post.author.substring(0, 8) + '...' + post.author.substring(post.author.length - 6);
+
+  const commentsHtml = post.comments && post.comments.length > 0
+    ? `
+      <div class="comments">
+        ${post.comments.map(comment => renderComment(comment)).join('')}
+      </div>
+    `
+    : '';
+
+  const imageHtml = post.image
+    ? `<img src="${post.image}" class="post-image" alt="Post image">`
+    : '';
+
+  return `
+    <div class="post" data-post-id="${post.id}">
+      <div class="post-header">
+        <div>
+          <div class="post-author">${post.authorName || shortAddress}</div>
+          ${post.authorName ? `<div class="post-address clickable-address" onclick="copyAddress('${post.author}')" title="Click to copy full address">${shortAddress}</div>` : `<div class="post-address clickable-address" onclick="copyAddress('${post.author}')" title="Click to copy full address">${post.author}</div>`}
+        </div>
+        <div class="post-time">${timeAgo}</div>
+      </div>
+      <div class="post-text">${escapeHtml(post.text)}</div>
+      ${imageHtml}
+      <div class="post-actions">
+        <button class="post-action-btn" onclick="showCommentForm(${post.id})">💬 Comment</button>
+        ${currentUser ? `<button class="post-action-btn delete" onclick="deletePost(${post.id})">🗑️ Delete</button>` : ''}
+      </div>
+      ${commentsHtml}
+      <div class="comment-form" id="comment-form-${post.id}" style="display: none;">
+        <input type="text" id="comment-input-${post.id}" placeholder="Write a comment...">
+        <button onclick="addComment(${post.id})">Post</button>
+      </div>
+    </div>
+  `;
+}
+
+// Render comment
+function renderComment(comment) {
+  const date = new Date(comment.timestamp);
+  const timeAgo = getTimeAgo(date);
+  const shortAddress = comment.author.substring(0, 8) + '...' + comment.author.substring(comment.author.length - 6);
+
+  return `
+    <div class="comment">
+      <div class="comment-header">
+        <span class="comment-author">${comment.authorName || shortAddress}</span>
+        <span class="comment-time">${timeAgo}</span>
+      </div>
+      <div class="comment-text">${escapeHtml(comment.text)}</div>
+    </div>
+  `;
+}
+
+// Copy address to clipboard
+window.copyAddress = async function(address) {
+  try {
+    await navigator.clipboard.writeText(address);
+
+    // Show brief confirmation
+    const notification = document.createElement('div');
+    notification.style.cssText = `
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      background: #155724;
+      color: white;
+      padding: 12px 20px;
+      border-radius: 6px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+      z-index: 10000;
+      animation: slideIn 0.3s ease;
+    `;
+    notification.textContent = 'Address copied to clipboard!';
+    document.body.appendChild(notification);
+
+    setTimeout(() => {
+      notification.remove();
+    }, 2000);
+  } catch (error) {
+    console.error('[message-board] Failed to copy address:', error);
+    alert('Failed to copy address');
+  }
+};
+
+// Show comment form
+window.showCommentForm = function(postId) {
+  const form = document.getElementById(`comment-form-${postId}`);
+  if (form) {
+    form.style.display = form.style.display === 'none' ? 'flex' : 'none';
+  }
+};
+
+// Add comment
+window.addComment = async function(postId) {
+  const input = document.getElementById(`comment-input-${postId}`);
+  const text = input.value.trim();
+
+  if (!text) return;
+
+  try {
+    const response = await fetch(`/agent/epistery/message-board/api/posts/${postId}/comments`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ text })
     });
+
+    if (!response.ok) {
+      const contentType = response.headers.get('content-type');
+      if (contentType && contentType.includes('application/json')) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to post comment');
+      } else {
+        throw new Error(`Failed to post comment (${response.status}). Please ensure you are authenticated.`);
+      }
+    }
+
+    input.value = '';
+    await loadPosts(); // Reload to show new comment
+  } catch (error) {
+    console.error('[message-board] Comment error:', error);
+    showError(error.message);
   }
-}
+};
+
+// Delete post
+window.deletePost = async function(postId) {
+  if (!confirm('Delete this post?')) return;
+
+  try {
+    const response = await fetch(`/agent/epistery/message-board/api/posts/${postId}`, {
+      method: 'DELETE',
+      credentials: 'include'
+    });
+
+    if (!response.ok) {
+      const contentType = response.headers.get('content-type');
+      if (contentType && contentType.includes('application/json')) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to delete post');
+      } else {
+        throw new Error(`Failed to delete post (${response.status}). Please ensure you are authenticated.`);
+      }
+    }
+
+    await loadPosts();
+  } catch (error) {
+    console.error('[message-board] Delete error:', error);
+    showError(error.message);
+  }
+};
 
 // Setup event listeners
 function setupEventListeners() {
@@ -228,21 +260,22 @@ function setupEventListeners() {
   postButton.addEventListener('click', createPost);
 
   postText.addEventListener('keydown', (e) => {
-    if (e.ctrlKey && e.key === 'Enter') {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
       createPost();
     }
   });
 
-  imageInput.addEventListener('change', (e) => {
+  imageInput.addEventListener('change', async (e) => {
     const file = e.target.files[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        imagePreview.src = e.target.result;
-        imagePreview.style.display = 'block';
-      };
-      reader.readAsDataURL(file);
-    }
+    if (!file) return;
+
+    // Show preview
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      imagePreview.src = e.target.result;
+      imagePreview.style.display = 'block';
+    };
+    reader.readAsDataURL(file);
   });
 }
 
@@ -255,179 +288,148 @@ async function createPost() {
   const text = postText.value.trim();
   if (!text) return;
 
-  const image = imagePreview.style.display === 'block' ? imagePreview.src : null;
-
   postButton.disabled = true;
+  postButton.textContent = 'Posting...';
 
   try {
-    // Get delegation token from white-list agent
-    const token = window.episteryWhiteList?.getDelegationToken();
-    const headers = { 'Content-Type': 'application/json' };
+    const body = {
+      text,
+      image: imagePreview.style.display !== 'none' ? imagePreview.src : null
+    };
 
-    if (token) {
-      headers['X-Epistery-Delegation'] = JSON.stringify(token);
-      console.log('[post] Sending delegation token:', token.delegation?.subject);
-    } else {
-      console.warn('[post] No delegation token available');
-    }
-
-    const response = await fetch('/api/posts', {
+    const response = await fetch('/agent/epistery/message-board/api/posts', {
       method: 'POST',
-      headers,
-      body: JSON.stringify({ text, image })
-    });
-
-    if (response.ok) {
-      postText.value = '';
-      imagePreview.style.display = 'none';
-      document.getElementById('image-input').value = '';
-    } else {
-      const error = await response.json();
-      console.error('[post] Server error:', error);
-      alert(`Failed to create post: ${error.message || error.error || 'Unknown error'}`);
-    }
-  } catch (error) {
-    console.error('Failed to create post:', error);
-    alert(`Failed to create post: ${error.message}`);
-  } finally {
-    postButton.disabled = false;
-  }
-}
-
-// Create comment
-async function createComment(postId, text) {
-  try {
-    // Get delegation token from white-list agent
-    const token = window.episteryWhiteList?.getDelegationToken();
-    const headers = { 'Content-Type': 'application/json' };
-
-    if (token) {
-      headers['X-Epistery-Delegation'] = JSON.stringify(token);
-    }
-
-    const response = await fetch(`/api/posts/${postId}/comments`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ text })
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(body)
     });
 
     if (!response.ok) {
-      alert('Failed to add comment');
+      const contentType = response.headers.get('content-type');
+      if (contentType && contentType.includes('application/json')) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to post');
+      } else {
+        const text = await response.text();
+        console.error('[message-board] Server response:', text);
+        throw new Error(`Failed to post (${response.status}). ${text.substring(0, 100)}`);
+      }
     }
+
+    // Clear form
+    postText.value = '';
+    imagePreview.style.display = 'none';
+    imagePreview.src = '';
+    document.getElementById('image-input').value = '';
+
+    // Reload posts
+    await loadPosts();
   } catch (error) {
-    console.error('Failed to add comment:', error);
-    alert('Failed to add comment');
+    console.error('[message-board] Post error:', error);
+    showError(error.message);
+  } finally {
+    postButton.disabled = false;
+    postButton.textContent = 'Post';
   }
 }
 
-// Render all posts
-function renderPosts() {
-  const container = document.getElementById('posts-container');
-  container.innerHTML = '';
+// Connect WebSocket for real-time updates
+function connectWebSocket() {
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsUrl = `${protocol}//${window.location.host}/agent/epistery/message-board/ws`;
 
-  postsCache.forEach(post => {
-    const postEl = createPostElement(post);
-    container.appendChild(postEl);
-  });
-}
+  ws = new WebSocket(wsUrl);
 
-// Create post element
-function createPostElement(post) {
-  const div = document.createElement('div');
-  div.className = 'post';
-
-  const header = document.createElement('div');
-  header.className = 'post-header';
-  header.innerHTML = `
-    <span>Posted by ${post.author}</span>
-    <span class="timestamp">${formatTime(post.timestamp)}</span>
-  `;
-
-  const text = document.createElement('div');
-  text.className = 'post-text';
-  text.textContent = post.text;
-
-  div.appendChild(header);
-  div.appendChild(text);
-
-  if (post.image) {
-    const img = document.createElement('img');
-    img.className = 'post-image';
-    img.src = post.image;
-    div.appendChild(img);
-  }
-
-  // Comments section
-  const commentsSection = document.createElement('div');
-  commentsSection.className = 'comments-section';
-
-  post.comments.forEach(comment => {
-    const commentEl = createCommentElement(comment);
-    commentsSection.appendChild(commentEl);
-  });
-
-  // Comment form
-  const commentForm = document.createElement('div');
-  commentForm.className = 'comment-form';
-  commentForm.innerHTML = `
-    <input type="text" class="comment-input" placeholder="Add a comment...">
-    <button class="comment-button">Comment</button>
-  `;
-
-  const commentInput = commentForm.querySelector('.comment-input');
-  const commentButton = commentForm.querySelector('.comment-button');
-
-  const submitComment = async () => {
-    const text = commentInput.value.trim();
-    if (!text) return;
-
-    commentButton.disabled = true;
-    await createComment(post.id, text);
-    commentInput.value = '';
-    commentButton.disabled = false;
+  ws.onopen = () => {
+    console.log('[message-board] WebSocket connected');
   };
 
-  commentButton.addEventListener('click', submitComment);
-  commentInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      submitComment();
+  ws.onmessage = (event) => {
+    const message = JSON.parse(event.data);
+    handleWebSocketMessage(message);
+  };
+
+  ws.onclose = () => {
+    console.log('[message-board] WebSocket disconnected, reconnecting...');
+    setTimeout(connectWebSocket, 5000);
+  };
+
+  ws.onerror = (error) => {
+    console.error('[message-board] WebSocket error:', error);
+  };
+}
+
+// Handle WebSocket messages
+function handleWebSocketMessage(message) {
+  console.log('[message-board] WebSocket message:', message);
+
+  switch (message.type) {
+    case 'new-post':
+      posts.unshift(message.post);
+      renderPosts();
+      break;
+
+    case 'new-comment':
+      const post = posts.find(p => p.id === message.postId);
+      if (post) {
+        post.comments.push(message.comment);
+        renderPosts();
+      }
+      break;
+
+    case 'delete-post':
+      posts = posts.filter(p => p.id !== message.postId);
+      renderPosts();
+      break;
+  }
+}
+
+// Show error message
+function showError(message) {
+  const container = document.getElementById('error-container');
+  const errorEl = document.createElement('div');
+  errorEl.className = 'error-message';
+  errorEl.textContent = message;
+  container.appendChild(errorEl);
+
+  setTimeout(() => {
+    errorEl.remove();
+  }, 5000);
+}
+
+// Utility: Get time ago string
+function getTimeAgo(date) {
+  const seconds = Math.floor((new Date() - date) / 1000);
+
+  const intervals = {
+    year: 31536000,
+    month: 2592000,
+    week: 604800,
+    day: 86400,
+    hour: 3600,
+    minute: 60
+  };
+
+  for (const [unit, secondsInUnit] of Object.entries(intervals)) {
+    const interval = Math.floor(seconds / secondsInUnit);
+    if (interval >= 1) {
+      return `${interval} ${unit}${interval === 1 ? '' : 's'} ago`;
     }
-  });
+  }
 
-  commentsSection.appendChild(commentForm);
-  div.appendChild(commentsSection);
-
-  return div;
+  return 'just now';
 }
 
-// Create comment element
-function createCommentElement(comment) {
+// Utility: Escape HTML
+function escapeHtml(text) {
   const div = document.createElement('div');
-  div.className = 'comment';
-
-  div.innerHTML = `
-    <div class="comment-header">
-      ${comment.author} • ${formatTime(comment.timestamp)}
-    </div>
-    <div class="comment-text">${comment.text}</div>
-  `;
-
-  return div;
+  div.textContent = text;
+  return div.innerHTML;
 }
 
-// Format timestamp
-function formatTime(timestamp) {
-  const date = new Date(timestamp);
-  const now = new Date();
-  const diff = now - date;
-
-  if (diff < 60000) return 'Just now';
-  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
-  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
-  if (diff < 604800000) return `${Math.floor(diff / 86400000)}d ago`;
-
-  return date.toLocaleDateString();
+// Start app when DOM is ready
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
 }
-
-// Initialize on load
-init();

@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Message Board</title>
+  <link rel="stylesheet" href="/style/static.css">
+  <style>
+    .board-container {
+      max-width: 800px;
+      margin: 0 auto;
+      padding: var(--spacer3);
+    }
+
+    .board-header {
+      margin-bottom: var(--spacer3);
+    }
+
+    .board-header h1 {
+      font-size: 2.5rem;
+      color: var(--primary);
+      margin-bottom: var(--spacerhalf);
+    }
+
+    .board-subtitle {
+      color: var(--text-color-quiet);
+      font-size: 1rem;
+    }
+
+    .user-status {
+      margin-top: var(--spacer);
+      padding: var(--spacer);
+      background: var(--bg-color-quiet-d);
+      border-radius: 6px;
+      font-size: 14px;
+    }
+
+    .user-status.authenticated {
+      background: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+    }
+
+    .user-status.guest {
+      background: #fff3cd;
+      color: #856404;
+      border: 1px solid #ffc107;
+    }
+
+    .new-post-form {
+      background: var(--bg-color-quiet-d);
+      padding: var(--spacer2);
+      border-radius: 8px;
+      margin-bottom: var(--spacer3);
+      border: 1px solid var(--page-border);
+    }
+
+    .new-post-form textarea {
+      width: 100%;
+      padding: var(--spacer);
+      border: 1px solid var(--page-border);
+      border-radius: 6px;
+      font-family: inherit;
+      font-size: 14px;
+      resize: vertical;
+      min-height: 80px;
+    }
+
+    .form-actions {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: var(--spacer);
+      gap: var(--spacer);
+    }
+
+    .image-upload {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 12px;
+      background: var(--bg-color);
+      border: 1px solid var(--page-border);
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      transition: all 0.2s;
+    }
+
+    .image-upload:hover {
+      background: var(--bg-color-d);
+    }
+
+    .image-upload input {
+      display: none;
+    }
+
+    .image-preview {
+      max-width: 100%;
+      max-height: 200px;
+      margin-top: var(--spacer);
+      border-radius: 6px;
+      border: 1px solid var(--page-border);
+    }
+
+    .btn-post {
+      padding: 10px 24px;
+      background: var(--action-color);
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn-post:hover {
+      background: var(--action-color-hilite);
+      transform: translateY(-1px);
+    }
+
+    .btn-post:disabled {
+      background: var(--neutral);
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .post {
+      background: var(--bg-color);
+      padding: var(--spacer2);
+      border-radius: 8px;
+      margin-bottom: var(--spacer2);
+      border: 1px solid var(--page-border);
+    }
+
+    .post-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: start;
+      margin-bottom: var(--spacer);
+    }
+
+    .post-author {
+      font-weight: 600;
+      color: var(--primary);
+      font-size: 14px;
+    }
+
+    .post-address {
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+      color: var(--text-color-quiet);
+      margin-top: 2px;
+    }
+
+    .clickable-address {
+      cursor: pointer;
+      transition: color 0.2s;
+    }
+
+    .clickable-address:hover {
+      color: var(--action-color);
+      text-decoration: underline;
+    }
+
+    .post-time {
+      font-size: 12px;
+      color: var(--text-color-quiet);
+    }
+
+    .post-text {
+      font-size: 15px;
+      line-height: 1.6;
+      color: var(--text-color);
+      margin-bottom: var(--spacer);
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+
+    .post-image {
+      max-width: 100%;
+      border-radius: 6px;
+      margin-bottom: var(--spacer);
+    }
+
+    .post-actions {
+      display: flex;
+      gap: var(--spacer);
+      margin-top: var(--spacer);
+      padding-top: var(--spacer);
+      border-top: 1px solid var(--page-border);
+    }
+
+    .post-action-btn {
+      padding: 6px 12px;
+      background: transparent;
+      border: 1px solid var(--page-border);
+      border-radius: 4px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.2s;
+      color: var(--text-color);
+    }
+
+    .post-action-btn:hover {
+      background: var(--bg-color-d);
+    }
+
+    .post-action-btn.delete {
+      color: #dc3545;
+      border-color: #dc3545;
+    }
+
+    .post-action-btn.delete:hover {
+      background: #dc3545;
+      color: white;
+    }
+
+    .comments {
+      margin-top: var(--spacer);
+      padding-top: var(--spacer);
+      border-top: 1px solid var(--page-border);
+    }
+
+    .comment {
+      padding: var(--spacer);
+      background: var(--bg-color-quiet-d);
+      border-radius: 6px;
+      margin-bottom: var(--spacerhalf);
+    }
+
+    .comment-header {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 6px;
+    }
+
+    .comment-author {
+      font-weight: 500;
+      font-size: 13px;
+      color: var(--primary);
+    }
+
+    .comment-time {
+      font-size: 11px;
+      color: var(--text-color-quiet);
+    }
+
+    .comment-text {
+      font-size: 14px;
+      line-height: 1.5;
+      color: var(--text-color);
+    }
+
+    .comment-form {
+      margin-top: var(--spacer);
+      display: flex;
+      gap: var(--spacerhalf);
+    }
+
+    .comment-form input {
+      flex: 1;
+      padding: 8px 12px;
+      border: 1px solid var(--page-border);
+      border-radius: 6px;
+      font-size: 14px;
+    }
+
+    .comment-form button {
+      padding: 8px 16px;
+      background: var(--action-color);
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 14px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .comment-form button:hover {
+      background: var(--action-color-hilite);
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: var(--spacer3);
+      color: var(--text-color-quiet);
+    }
+
+    .empty-state-icon {
+      font-size: 48px;
+      margin-bottom: var(--spacer);
+    }
+
+    .error-message {
+      background: #f8d7da;
+      color: #721c24;
+      padding: var(--spacer);
+      border-radius: 6px;
+      margin-bottom: var(--spacer);
+      border: 1px solid #f5c6cb;
+    }
+
+    .loading {
+      text-align: center;
+      padding: var(--spacer3);
+      color: var(--text-color-quiet);
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <nav class="container">
+      <a href="/" class="logo">
+        <span class="logo-text">💬 Message Board</span>
+      </a>
+    </nav>
+  </header>
+
+  <main class="board-container">
+    <div class="board-header">
+      <p class="board-subtitle">Community discussions and announcements</p>
+      <div id="user-status" class="user-status"></div>
+    </div>
+
+    <div id="error-container"></div>
+
+    <div class="new-post-form">
+      <textarea id="post-text" placeholder="Everything you post is yours, by law of math." rows="3"></textarea>
+      <div class="form-actions">
+        <label class="image-upload">
+          <input type="file" id="image-input" accept="image/*">
+          <span>📷 Add Image</span>
+        </label>
+        <button id="post-button" class="btn-post">Post</button>
+      </div>
+      <img id="image-preview" class="image-preview" style="display: none;">
+    </div>
+
+    <div id="posts-container"></div>
+  </main>
+
+  <footer>
+    <div class="container">
+      <div class="footer-bottom">
+        <p>&copy; 2025 Rootz Corp. Powered by Epistery.</p>
+      </div>
+    </div>
+  </footer>
+
+  <script src="/agent/epistery/message-board/static/app.js"></script>
+</body>
+</html>

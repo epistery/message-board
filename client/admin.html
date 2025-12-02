@@ -1,0 +1,666 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Message Board Admin</title>
+  <link rel="stylesheet" href="/style/static.css">
+  <style>
+    .admin-container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: var(--spacer3);
+    }
+
+    .console-layout {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: var(--spacer3);
+      margin-bottom: var(--spacer3);
+    }
+
+    .console-panel {
+      background: var(--bg-color-quiet-d);
+      border: 1px solid var(--page-border);
+      border-radius: 8px;
+      padding: var(--spacer2);
+    }
+
+    .console-panel.full-width {
+      grid-column: 1 / -1;
+    }
+
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: var(--spacer2);
+      padding-bottom: var(--spacer);
+      border-bottom: 2px solid var(--primary);
+    }
+
+    .panel-header h2 {
+      margin: 0;
+      color: var(--primary);
+      font-size: 1.25rem;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: var(--spacer);
+      margin-bottom: var(--spacer2);
+    }
+
+    .stat-box {
+      background: var(--bg-color);
+      padding: var(--spacer2);
+      border-radius: 6px;
+      text-align: center;
+      border: 1px solid var(--page-border);
+    }
+
+    .stat-number {
+      display: block;
+      font-size: 2rem;
+      font-weight: bold;
+      color: var(--primary);
+      margin-bottom: var(--spacerhalf);
+    }
+
+    .stat-label {
+      display: block;
+      font-size: 0.875rem;
+      color: var(--text-color-quiet);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .list-section {
+      margin-bottom: var(--spacer3);
+    }
+
+    .list-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: var(--spacer);
+    }
+
+    .list-header h3 {
+      margin: 0;
+      color: var(--text-color);
+      font-size: 1rem;
+    }
+
+    .member-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .member-table th {
+      background: var(--bg-color-d);
+      padding: var(--spacer);
+      text-align: left;
+      font-weight: 600;
+      color: var(--text-color);
+      border-bottom: 2px solid var(--page-border);
+      font-size: 0.875rem;
+    }
+
+    .member-table td {
+      padding: var(--spacer);
+      border-bottom: 1px solid var(--page-border);
+      font-size: 0.875rem;
+    }
+
+    .member-table tr:hover {
+      background: var(--bg-color-d);
+    }
+
+    .mono {
+      font-family: 'Courier New', monospace;
+      font-size: 0.875rem;
+      color: var(--text-color-quiet);
+    }
+
+    .btn {
+      padding: 8px 16px;
+      border: none;
+      border-radius: 6px;
+      font-size: 0.875rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn-primary {
+      background: var(--action-color);
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background: var(--action-color-hilite);
+      transform: translateY(-1px);
+    }
+
+    .btn-icon {
+      background: transparent;
+      border: 1px solid var(--page-border);
+      padding: 6px 10px;
+      cursor: pointer;
+      border-radius: 4px;
+      transition: all 0.2s;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .btn-icon:hover {
+      background: var(--action-color);
+      border-color: var(--action-color);
+    }
+
+    .btn-icon:hover .icon-svg {
+      fill: white;
+    }
+
+    .icon-svg {
+      width: 16px;
+      height: 16px;
+      fill: var(--action-color);
+      transition: fill 0.2s;
+    }
+
+    .action-buttons {
+      display: flex;
+      gap: var(--spacerhalf);
+    }
+
+    .modal {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .modal.active {
+      display: flex;
+    }
+
+    .modal-content {
+      background: var(--bg-color);
+      padding: var(--spacer3);
+      border-radius: 8px;
+      max-width: 500px;
+      width: 90%;
+      border: 1px solid var(--page-border);
+    }
+
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: var(--spacer2);
+      padding-bottom: var(--spacer);
+      border-bottom: 2px solid var(--primary);
+    }
+
+    .modal-header h3 {
+      margin: 0;
+      color: var(--primary);
+    }
+
+    .close-btn {
+      background: none;
+      border: none;
+      font-size: 24px;
+      cursor: pointer;
+      color: var(--text-color-quiet);
+      padding: 0;
+      width: 30px;
+      height: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .close-btn:hover {
+      color: var(--text-color);
+    }
+
+    .form-group {
+      margin-bottom: var(--spacer2);
+    }
+
+    .form-group label {
+      display: block;
+      margin-bottom: var(--spacerhalf);
+      font-weight: 500;
+      color: var(--text-color);
+    }
+
+    .form-group input,
+    .form-group textarea,
+    .form-group select {
+      width: 100%;
+      padding: var(--spacer);
+      border: 1px solid var(--page-border);
+      border-radius: 6px;
+      font-family: inherit;
+      font-size: 0.875rem;
+      background: var(--bg-color);
+      color: var(--text-color);
+    }
+
+    .form-group input:focus,
+    .form-group textarea:focus,
+    .form-group select:focus {
+      outline: none;
+      border-color: var(--action-color);
+    }
+
+    .form-actions {
+      display: flex;
+      gap: var(--spacer);
+      justify-content: flex-end;
+      margin-top: var(--spacer2);
+    }
+
+    .message {
+      padding: var(--spacer);
+      border-radius: 6px;
+      margin-bottom: var(--spacer2);
+      border: 1px solid;
+    }
+
+    .message.success {
+      background: #d4edda;
+      color: #155724;
+      border-color: #c3e6cb;
+    }
+
+    .message.error {
+      background: #f8d7da;
+      color: #721c24;
+      border-color: #f5c6cb;
+    }
+
+    .message.info {
+      background: #d1ecf1;
+      color: #0c5460;
+      border-color: #bee5eb;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: var(--spacer3);
+      color: var(--text-color-quiet);
+    }
+
+    .config-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: var(--spacer);
+      background: var(--bg-color);
+      border-radius: 6px;
+      margin-bottom: var(--spacer);
+      border: 1px solid var(--page-border);
+    }
+
+    .config-label {
+      font-weight: 500;
+      color: var(--text-color);
+    }
+
+    .config-value {
+      font-family: 'Courier New', monospace;
+      color: var(--primary);
+    }
+
+    .input-group {
+      display: flex;
+      gap: var(--spacerhalf);
+      align-items: center;
+    }
+
+    .input-group input {
+      flex: 1;
+    }
+
+    .input-group .btn {
+      white-space: nowrap;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <nav class="container">
+      <a href="/" class="logo">
+        <span class="logo-text">Message Board Admin</span>
+      </a>
+      <div style="display: flex; gap: var(--spacer); align-items: center;">
+        <a href="/agent/epistery/message-board/board" class="btn btn-primary">View Board</a>
+      </div>
+    </nav>
+  </header>
+
+  <main class="admin-container">
+    <div id="message-container"></div>
+
+    <!-- Stats Panel -->
+    <section class="console-panel full-width">
+      <div class="panel-header">
+        <h2>Overview</h2>
+      </div>
+      <div class="stats">
+        <div class="stat-box">
+          <span id="post-count" class="stat-number">-</span>
+          <span class="stat-label">Total Posts</span>
+        </div>
+        <div class="stat-box">
+          <span id="moderator-count" class="stat-number">-</span>
+          <span class="stat-label">Moderators</span>
+        </div>
+        <div class="stat-box">
+          <span id="whitelist-count" class="stat-number">-</span>
+          <span class="stat-label">Posting Whitelist</span>
+        </div>
+        <div class="stat-box">
+          <span id="min-points" class="stat-number">-</span>
+          <span class="stat-label">Min Notabot Points</span>
+        </div>
+      </div>
+    </section>
+
+    <div class="console-layout">
+      <!-- Moderators Panel -->
+      <section class="console-panel">
+        <div class="panel-header">
+          <h2>Moderators</h2>
+          <button class="btn btn-primary" onclick="showAddModal('moderator')">Add Moderator</button>
+        </div>
+
+        <div id="moderators-list"></div>
+      </section>
+
+      <!-- Posting Whitelist Panel -->
+      <section class="console-panel">
+        <div class="panel-header">
+          <h2>Posting Whitelist</h2>
+          <button class="btn btn-primary" onclick="showAddModal('posting')">Add Member</button>
+        </div>
+
+        <div id="posting-list"></div>
+      </section>
+    </div>
+
+    <!-- Configuration Panel -->
+    <section class="console-panel full-width">
+      <div class="panel-header">
+        <h2>Configuration</h2>
+      </div>
+
+      <div class="config-item">
+        <span class="config-label">Moderator List Name</span>
+        <span class="config-value" id="moderator-list-name">-</span>
+      </div>
+
+      <div class="config-item">
+        <span class="config-label">Posting Whitelist Name</span>
+        <span class="config-value" id="posting-list-name">-</span>
+      </div>
+
+      <div class="config-item">
+        <span class="config-label">Minimum Notabot Points Required</span>
+        <span class="config-value" id="min-notabot-points">-</span>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="container">
+      <div class="footer-bottom">
+        <p>&copy; 2025 Rootz Corp. Powered by Epistery.</p>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Add Member Modal -->
+  <div id="add-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="modal-title">Add Member</h3>
+        <button class="close-btn" onclick="closeModal()">&times;</button>
+      </div>
+
+      <form id="add-form" onsubmit="addMember(event)">
+        <div class="form-group">
+          <label for="member-address">Rivet Address</label>
+          <input
+            type="text"
+            id="member-address"
+            placeholder="rivet:..."
+            required
+            pattern="rivet:.*"
+            title="Must be a valid Rivet address starting with rivet:"
+          >
+        </div>
+
+        <div class="form-group">
+          <label for="member-name">Display Name (optional)</label>
+          <input type="text" id="member-name" placeholder="John Doe">
+        </div>
+
+        <input type="hidden" id="list-type">
+
+        <div class="form-actions">
+          <button type="button" class="btn" onclick="closeModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary">Add Member</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    let config = {};
+
+    // Load initial data
+    async function loadData() {
+      try {
+        // Load config
+        const healthResponse = await fetch('/agent/epistery/message-board/api/health', {
+          credentials: 'include'
+        });
+        const health = await healthResponse.json();
+        config = health.config;
+
+        // Update config display
+        document.getElementById('moderator-list-name').textContent = config.moderatorList;
+        document.getElementById('posting-list-name').textContent = config.postingList;
+        document.getElementById('min-notabot-points').textContent = config.minNotabotPoints;
+        document.getElementById('min-points').textContent = config.minNotabotPoints;
+
+        // Load posts count
+        const postsResponse = await fetch('/agent/epistery/message-board/api/posts', {
+          credentials: 'include'
+        });
+        const posts = await postsResponse.json();
+        document.getElementById('post-count').textContent = posts.length;
+
+        // Load moderators
+        await loadList('moderator');
+
+        // Load posting whitelist
+        await loadList('posting');
+
+      } catch (error) {
+        console.error('[admin] Failed to load data:', error);
+        showMessage('Failed to load admin data: ' + error.message, 'error');
+      }
+    }
+
+    // Load a specific list
+    async function loadList(type) {
+      const listName = type === 'moderator' ? config.moderatorList : config.postingList;
+      const containerId = type === 'moderator' ? 'moderators-list' : 'posting-list';
+      const countId = type === 'moderator' ? 'moderator-count' : 'whitelist-count';
+
+      try {
+        const response = await fetch(`/white-list/api/lists/${encodeURIComponent(listName)}/members`, {
+          credentials: 'include'
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to load list');
+        }
+
+        const members = await response.json();
+        document.getElementById(countId).textContent = members.length;
+
+        const container = document.getElementById(containerId);
+
+        if (members.length === 0) {
+          container.innerHTML = '<div class="empty-state">No members yet</div>';
+          return;
+        }
+
+        container.innerHTML = `
+          <table class="member-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Address</th>
+                <th style="text-align: right;">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${members.map(member => `
+                <tr>
+                  <td>${member.name || '-'}</td>
+                  <td class="mono">${member.address}</td>
+                  <td style="text-align: right;">
+                    <div class="action-buttons">
+                      <button class="btn-icon" onclick="removeMember('${type}', '${member.address}')" title="Remove member">
+                        <svg class="icon-svg" viewBox="0 0 20 20">
+                          <path d="M6 2l2-2h4l2 2h4v2H2V2h4zM3 6h14l-1 14H4L3 6zm5 2v10h1V8H8zm3 0v10h1V8h-1z"/>
+                        </svg>
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `;
+      } catch (error) {
+        console.error(`[admin] Failed to load ${type} list:`, error);
+        showMessage(`Failed to load ${type} list: ` + error.message, 'error');
+      }
+    }
+
+    // Show add member modal
+    function showAddModal(type) {
+      document.getElementById('modal-title').textContent =
+        type === 'moderator' ? 'Add Moderator' : 'Add to Posting Whitelist';
+      document.getElementById('list-type').value = type;
+      document.getElementById('add-modal').classList.add('active');
+      document.getElementById('member-address').focus();
+    }
+
+    // Close modal
+    function closeModal() {
+      document.getElementById('add-modal').classList.remove('active');
+      document.getElementById('add-form').reset();
+    }
+
+    // Add member
+    async function addMember(event) {
+      event.preventDefault();
+
+      const type = document.getElementById('list-type').value;
+      const address = document.getElementById('member-address').value.trim();
+      const name = document.getElementById('member-name').value.trim();
+      const listName = type === 'moderator' ? config.moderatorList : config.postingList;
+
+      try {
+        const response = await fetch(`/white-list/api/lists/${encodeURIComponent(listName)}/members`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ address, name: name || null })
+        });
+
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error || 'Failed to add member');
+        }
+
+        closeModal();
+        showMessage(`Successfully added to ${type === 'moderator' ? 'moderators' : 'posting whitelist'}`, 'success');
+        await loadList(type);
+      } catch (error) {
+        console.error('[admin] Add member error:', error);
+        showMessage('Failed to add member: ' + error.message, 'error');
+      }
+    }
+
+    // Remove member
+    async function removeMember(type, address) {
+      if (!confirm(`Remove ${address} from ${type === 'moderator' ? 'moderators' : 'posting whitelist'}?`)) {
+        return;
+      }
+
+      const listName = type === 'moderator' ? config.moderatorList : config.postingList;
+
+      try {
+        const response = await fetch(`/white-list/api/lists/${encodeURIComponent(listName)}/members/${encodeURIComponent(address)}`, {
+          method: 'DELETE',
+          credentials: 'include'
+        });
+
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error || 'Failed to remove member');
+        }
+
+        showMessage('Member removed successfully', 'success');
+        await loadList(type);
+      } catch (error) {
+        console.error('[admin] Remove member error:', error);
+        showMessage('Failed to remove member: ' + error.message, 'error');
+      }
+    }
+
+    // Show message
+    function showMessage(text, type = 'info') {
+      const container = document.getElementById('message-container');
+      const message = document.createElement('div');
+      message.className = `message ${type}`;
+      message.textContent = text;
+      container.appendChild(message);
+
+      setTimeout(() => {
+        message.remove();
+      }, 5000);
+    }
+
+    // Initialize
+    loadData();
+
+    // Close modal on ESC key
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        closeModal();
+      }
+    });
+  </script>
+</body>
+</html>
