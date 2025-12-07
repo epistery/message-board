@@ -47,23 +47,45 @@ async function checkAuthStatus() {
 
   // Try to get wallet address from localStorage (same-domain as home page)
   try {
+    console.log('[message-board] Checking localStorage for epistery wallet...');
+    console.log('[message-board] Origin:', window.location.origin);
+    console.log('[message-board] localStorage length:', localStorage.length);
+
     const data = localStorage.getItem('epistery');
+    console.log('[message-board] localStorage.epistery exists:', !!data);
+
     if (data) {
       const parsed = JSON.parse(data);
+      console.log('[message-board] Parsed data keys:', Object.keys(parsed));
+      console.log('[message-board] Wallets count:', parsed.wallets ? parsed.wallets.length : 0);
+      console.log('[message-board] Default wallet ID:', parsed.defaultWalletId);
 
       // Get the default wallet from the wallets array
       let wallet = null;
       if (parsed.wallets && parsed.wallets.length > 0) {
         // Find the default wallet
         wallet = parsed.wallets.find(w => w.id === parsed.defaultWalletId);
+        console.log('[message-board] Found default wallet:', !!wallet);
+
         // Fallback to first wallet if no default
         if (!wallet) {
           wallet = parsed.wallets[0];
+          console.log('[message-board] Using first wallet as fallback');
+        }
+
+        // Extract actual wallet object from wrapper
+        if (wallet && wallet.wallet) {
+          console.log('[message-board] Wallet wrapper found, extracting...');
+          wallet = wallet.wallet;
         }
       }
 
+      console.log('[message-board] Final wallet:', wallet);
+
       if (wallet && wallet.address) {
         const address = wallet.rivetAddress || wallet.address;
+        console.log('[message-board] Authenticated as:', address);
+
         statusEl.className = 'user-status authenticated';
         statusEl.innerHTML = `
           ✓ Authenticated as <strong class="clickable-address" onclick="copyAddress('${address}')" style="cursor: pointer; text-decoration: underline;" title="Click to copy">${address}</strong>
@@ -72,45 +94,22 @@ async function checkAuthStatus() {
 
         currentUser = { address };
         return;
+      } else {
+        console.log('[message-board] No valid wallet address found in structure');
       }
     }
   } catch (e) {
-    console.log('[message-board] Error checking localStorage:', e.message);
+    console.error('[message-board] Error checking localStorage:', e);
   }
 
-  // Fallback: Check for delegation token in cookies (for cross-domain scenarios)
-  const cookies = document.cookie.split(';');
-  let token = null;
-
-  for (let cookie of cookies) {
-    const [name, value] = cookie.trim().split('=');
-    if (name === 'epistery_delegation') {
-      try {
-        token = JSON.parse(decodeURIComponent(value));
-        break;
-      } catch (e) {
-        console.error('[message-board] Failed to parse delegation token:', e);
-      }
-    }
-  }
-
-  if (token && token.delegation) {
-    const address = token.delegation.subject;
-
-    statusEl.className = 'user-status authenticated';
-    statusEl.innerHTML = `
-      ✓ Authenticated as <strong class="clickable-address" onclick="copyAddress('${address}')" style="cursor: pointer; text-decoration: underline;" title="Click to copy">${address}</strong>
-      <span style="margin-left: 10px; font-size: 12px; opacity: 0.8;">You can post and comment</span>
-    `;
-
-    currentUser = { address };
-  } else {
-    // Not authenticated - show sign in link
-    statusEl.className = 'user-status guest';
-    statusEl.innerHTML = `
-      👁️ Viewing as guest - <a href="/status" style="color: inherit; text-decoration: underline;">Connect Wallet</a> to post
-    `;
-  }
+  // No wallet in localStorage - show helpful sign-in message
+  statusEl.className = 'user-status guest';
+  statusEl.innerHTML = `
+    👁️ Viewing as guest - <a href="/status" style="color: inherit; text-decoration: underline;">Create/Connect Wallet</a> to post
+    <div style="margin-top: 8px; font-size: 12px; opacity: 0.8;">
+      Click above to auto-create a secure wallet for this domain (takes 1 second)
+    </div>
+  `;
 }
 
 // Load posts from API
