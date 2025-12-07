@@ -527,20 +527,26 @@ export default class MessageBoardAgent {
         return { valid: false, error: 'No wallet address provided' };
       }
 
-      // Normalize address to lowercase for comparison (Ethereum addresses are case-insensitive)
-      const normalizedAddress = address.toLowerCase();
-      console.log('[message-board] verifySameDomainAuth - checking address:', normalizedAddress);
+      console.log('[message-board] verifySameDomainAuth - checking address:', address);
 
       // Verify this address is the domain admin (owns the domain)
       if (this.epistery) {
-        const isDomainAdmin = await this.epistery.isListed(normalizedAddress, `${req.domain}::admin`);
+        // Check standard domain list format: domain::{domain}
+        const isDomainMember = await this.isListedCaseInsensitive(address, `domain::${req.domain}`);
+        if (isDomainMember) {
+          console.log('[message-board] Same-domain auth successful for domain member');
+          return { valid: true, address, isDomainMember: true };
+        }
+
+        // Also check alternative admin list format for backwards compatibility
+        const isDomainAdmin = await this.isListedCaseInsensitive(address, `${req.domain}::admin`);
         if (isDomainAdmin) {
           console.log('[message-board] Same-domain auth successful for domain admin');
           return { valid: true, address, isDomainAdmin: true };
         }
 
         // Also check global admin
-        const isGlobalAdmin = await this.epistery.isListed(normalizedAddress, 'epistery::admin');
+        const isGlobalAdmin = await this.isListedCaseInsensitive(address, 'epistery::admin');
         if (isGlobalAdmin) {
           console.log('[message-board] Same-domain auth successful for global admin');
           return { valid: true, address, isGlobalAdmin: true };
@@ -553,6 +559,16 @@ export default class MessageBoardAgent {
       console.error('[message-board] Same-domain auth error:', error);
       return { valid: false, error: error.message };
     }
+  }
+
+  /**
+   * Case-insensitive whitelist check
+   * Ethereum addresses are case-insensitive but string comparison is not
+   */
+  async isListedCaseInsensitive(address, listName) {
+    const list = await this.epistery.getList(listName);
+    const addressLower = address.toLowerCase();
+    return list.some(entry => entry.addr.toLowerCase() === addressLower);
   }
 
   async verifyDelegationToken(req) {
