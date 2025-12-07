@@ -519,9 +519,11 @@ export default class MessageBoardAgent {
    */
   async verifySameDomainAuth(req) {
     try {
+      console.log('[message-board] verifySameDomainAuth - all headers:', req.headers);
       const address = req.headers['x-wallet-address'];
 
       if (!address) {
+        console.log('[message-board] verifySameDomainAuth - no wallet address header found');
         return { valid: false, error: 'No wallet address provided' };
       }
 
