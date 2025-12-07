@@ -29,8 +29,8 @@ async function init() {
   // Load posts
   await loadPosts();
 
-  // Connect WebSocket for real-time updates
-  connectWebSocket();
+  // Connect WebSocket for real-time updates (disabled - not critical for functionality)
+  // connectWebSocket();
 
   // Setup event listeners
   setupEventListeners();
