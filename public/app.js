@@ -47,22 +47,35 @@ async function checkAuthStatus() {
 
   // Try to get wallet address from localStorage (same-domain as home page)
   try {
-    const walletData = localStorage.getItem('epistery_wallet');
-    if (walletData) {
-      const wallet = JSON.parse(walletData);
-      if (wallet.address) {
+    const data = localStorage.getItem('epistery');
+    if (data) {
+      const parsed = JSON.parse(data);
+
+      // Get the default wallet from the wallets array
+      let wallet = null;
+      if (parsed.wallets && parsed.wallets.length > 0) {
+        // Find the default wallet
+        wallet = parsed.wallets.find(w => w.id === parsed.defaultWalletId);
+        // Fallback to first wallet if no default
+        if (!wallet) {
+          wallet = parsed.wallets[0];
+        }
+      }
+
+      if (wallet && wallet.address) {
+        const address = wallet.rivetAddress || wallet.address;
         statusEl.className = 'user-status authenticated';
         statusEl.innerHTML = `
-          ✓ Authenticated as <strong class="clickable-address" onclick="copyAddress('${wallet.address}')" style="cursor: pointer; text-decoration: underline;" title="Click to copy">${wallet.address}</strong>
+          ✓ Authenticated as <strong class="clickable-address" onclick="copyAddress('${address}')" style="cursor: pointer; text-decoration: underline;" title="Click to copy">${address}</strong>
           <span style="margin-left: 10px; font-size: 12px; opacity: 0.8;">You can post and comment</span>
         `;
 
-        currentUser = { address: wallet.address };
+        currentUser = { address };
         return;
       }
     }
   } catch (e) {
-    console.log('[message-board] Could not read wallet from localStorage:', e.message);
+    console.log('[message-board] Error checking localStorage:', e.message);
   }
 
   // Fallback: Check for delegation token in cookies (for cross-domain scenarios)
