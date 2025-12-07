@@ -45,27 +45,24 @@ async function init() {
 async function checkAuthStatus() {
   const statusEl = document.getElementById('user-status');
 
+  // Try to get wallet address from localStorage (same-domain as home page)
   try {
-    // Try to connect via Witness (same-domain auth via localStorage)
-    const WitnessModule = await import('/lib/witness.js');
-    const Witness = WitnessModule.default;
-    const witness = await Witness.connect();
-    const status = witness.getStatus();
+    const walletData = localStorage.getItem('epistery_wallet');
+    if (walletData) {
+      const wallet = JSON.parse(walletData);
+      if (wallet.address) {
+        statusEl.className = 'user-status authenticated';
+        statusEl.innerHTML = `
+          ✓ Authenticated as <strong class="clickable-address" onclick="copyAddress('${wallet.address}')" style="cursor: pointer; text-decoration: underline;" title="Click to copy">${wallet.address}</strong>
+          <span style="margin-left: 10px; font-size: 12px; opacity: 0.8;">You can post and comment</span>
+        `;
 
-    if (status.client && status.client.address) {
-      const address = status.client.address;
-
-      statusEl.className = 'user-status authenticated';
-      statusEl.innerHTML = `
-        ✓ Authenticated as <strong class="clickable-address" onclick="copyAddress('${address}')" style="cursor: pointer; text-decoration: underline;" title="Click to copy">${address}</strong>
-        <span style="margin-left: 10px; font-size: 12px; opacity: 0.8;">You can post and comment</span>
-      `;
-
-      currentUser = { address };
-      return;
+        currentUser = { address: wallet.address };
+        return;
+      }
     }
   } catch (e) {
-    console.log('[message-board] Witness not available, trying delegation cookie:', e.message);
+    console.log('[message-board] Could not read wallet from localStorage:', e.message);
   }
 
   // Fallback: Check for delegation token in cookies (for cross-domain scenarios)
