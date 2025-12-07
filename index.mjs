@@ -37,33 +37,56 @@ export default class MessageBoardAgent {
     this.postChain = [];
     this.lastHash = '0000000000000000000000000000000000000000000000000000000000000000';
 
-    // Data storage
+    // Data storage - domain-specific paths set per-request
     this.dataDir = path.join(__dirname, 'data');
-    this.postsFile = path.join(this.dataDir, 'posts.json');
-    this.batchFile = path.join(this.dataDir, 'batch.json');
 
-    // Ensure data directory exists
-    if (!existsSync(this.dataDir)) {
-      mkdirSync(this.dataDir, { recursive: true });
+    // Per-domain state (keyed by domain)
+    this.domainStates = new Map();
+  }
+
+  /**
+   * Get domain-specific file paths and initialize if needed
+   */
+  getDomainFiles(domain) {
+    const domainDir = path.join(this.dataDir, domain);
+    const postsFile = path.join(domainDir, 'posts.json');
+    const batchFile = path.join(domainDir, 'batch.json');
+
+    // Ensure domain directory exists
+    if (!existsSync(domainDir)) {
+      mkdirSync(domainDir, { recursive: true });
     }
 
-    // Initialize data files
-    if (!existsSync(this.postsFile)) {
-      writeFileSync(this.postsFile, JSON.stringify({ posts: [], nextId: 1 }));
+    // Initialize posts file
+    if (!existsSync(postsFile)) {
+      writeFileSync(postsFile, JSON.stringify({ posts: [], nextId: 1 }));
     }
 
-    if (!existsSync(this.batchFile)) {
-      writeFileSync(this.batchFile, JSON.stringify({
+    // Initialize batch file
+    if (!existsSync(batchFile)) {
+      writeFileSync(batchFile, JSON.stringify({
         chain: [],
         lastHash: this.lastHash,
         lastFlush: Date.now()
       }));
-    } else {
-      // Load existing batch state
-      const batchData = JSON.parse(readFileSync(this.batchFile, 'utf8'));
-      this.postChain = batchData.chain || [];
-      this.lastHash = batchData.lastHash || this.lastHash;
     }
+
+    return { postsFile, batchFile, domainDir };
+  }
+
+  /**
+   * Get or initialize domain state
+   */
+  getDomainState(domain) {
+    if (!this.domainStates.has(domain)) {
+      const { batchFile } = this.getDomainFiles(domain);
+      const batchData = JSON.parse(readFileSync(batchFile, 'utf8'));
+      this.domainStates.set(domain, {
+        postChain: batchData.chain || [],
+        lastHash: batchData.lastHash || this.lastHash
+      });
+    }
+    return this.domainStates.get(domain);
   }
 
   /**
@@ -73,7 +96,7 @@ export default class MessageBoardAgent {
    * @param {express.Router} router - Express router instance
    */
   attach(router) {
-    // Store epistery instance from app.locals if available
+    // Store epistery instance and domain from app.locals
     router.use((req, res, next) => {
       if (!this.epistery && req.app.locals.epistery) {
         this.epistery = req.app.locals.epistery;
@@ -85,7 +108,15 @@ export default class MessageBoardAgent {
           console.log('[message-board] IPFS configured:', this.ipfsUrl);
         }
       }
+
+      // Store domain in request for domain-specific data access
+      req.domain = req.hostname || 'localhost';
       next();
+    });
+
+    // Redirect root to board
+    router.get('/', (req, res) => {
+      res.redirect(req.baseUrl + '/board');
     });
 
     // Serve static files
@@ -147,7 +178,7 @@ export default class MessageBoardAgent {
     // Get all posts (public, read-only)
     router.get('/api/posts', (req, res) => {
       try {
-        const data = this.readData();
+        const data = this.readData(req.domain);
         res.json(data.posts);
       } catch (error) {
         res.status(500).json({ error: error.message });
@@ -179,7 +210,7 @@ export default class MessageBoardAgent {
           });
         }
 
-        const data = this.readData();
+        const data = this.readData(req.domain);
         const post = {
           id: data.nextId++,
           text: text.trim(),
@@ -192,7 +223,7 @@ export default class MessageBoardAgent {
 
         // Add to local storage
         data.posts.unshift(post);
-        this.writeData(data);
+        this.writeData(req.domain, data);
 
         // Add to IPFS batch chain (invisible to user)
         // This creates Data Wallet: user owns content with cryptographic proof
@@ -234,7 +265,7 @@ export default class MessageBoardAgent {
           });
         }
 
-        const data = this.readData();
+        const data = this.readData(req.domain);
         const post = data.posts.find(p => p.id === postId);
 
         if (!post) {
@@ -250,7 +281,7 @@ export default class MessageBoardAgent {
         };
 
         post.comments.push(comment);
-        this.writeData(data);
+        this.writeData(req.domain, data);
 
         this.broadcast({ type: 'new-comment', postId, comment });
         res.json(comment);
@@ -271,7 +302,7 @@ export default class MessageBoardAgent {
           return res.status(403).json({ error: 'Moderator access required' });
         }
 
-        const data = this.readData();
+        const data = this.readData(req.domain);
         const index = data.posts.findIndex(p => p.id === postId);
 
         if (index === -1) {
@@ -279,7 +310,7 @@ export default class MessageBoardAgent {
         }
 
         data.posts.splice(index, 1);
-        this.writeData(data);
+        this.writeData(req.domain, data);
 
         this.broadcast({ type: 'delete-post', postId });
         res.json({ success: true });
@@ -291,7 +322,7 @@ export default class MessageBoardAgent {
 
     // Status endpoint
     router.get('/status', (req, res) => {
-      const data = this.readData();
+      const data = this.readData(req.domain);
       res.json({
         agent: 'message-board',
         version: '1.0.0',
@@ -531,17 +562,19 @@ export default class MessageBoardAgent {
   }
 
   /**
-   * Read posts data from file
+   * Read posts data from domain-specific file
    */
-  readData() {
-    return JSON.parse(readFileSync(this.postsFile, 'utf8'));
+  readData(domain) {
+    const { postsFile } = this.getDomainFiles(domain);
+    return JSON.parse(readFileSync(postsFile, 'utf8'));
   }
 
   /**
-   * Write posts data to file
+   * Write posts data to domain-specific file
    */
-  writeData(data) {
-    writeFileSync(this.postsFile, JSON.stringify(data, null, 2));
+  writeData(domain, data) {
+    const { postsFile } = this.getDomainFiles(domain);
+    writeFileSync(postsFile, JSON.stringify(data, null, 2));
   }
 
   /**

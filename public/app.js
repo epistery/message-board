@@ -3,9 +3,28 @@ let posts = [];
 let ws = null;
 let currentUser = null;
 
+// Load navigation menu dynamically
+async function loadNavMenu() {
+  try {
+    const response = await fetch('/api/nav-menu');
+    const html = await response.text();
+    const nav = document.querySelector('nav.container');
+    const existingMenu = document.getElementById('nav-menu');
+    if (existingMenu) {
+      existingMenu.remove();
+    }
+    nav.insertAdjacentHTML('beforeend', html);
+  } catch (error) {
+    console.error('Failed to load navigation menu:', error);
+  }
+}
+
 // Initialize
 async function init() {
   console.log('[message-board] Initializing...');
+
+  // Load navigation menu
+  await loadNavMenu();
 
   // Load posts
   await loadPosts();
