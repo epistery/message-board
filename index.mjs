@@ -378,14 +378,15 @@ export default class MessageBoardAgent {
         }
 
         // 2. Check if domain admin
-        const domainList = `domain::${verification.domain}`;
-        console.log(`[message-board] Checking domain admin for ${address} on list ${domainList}`);
-        const isDomainAdmin = await this.epistery.isListed(address, domainList);
+        // Format: {resource}::{role}
+        const domainAdminList = `${verification.domain}::admin`;
+        console.log(`[message-board] Checking domain admin for ${address} on list ${domainAdminList}`);
+        const isDomainAdmin = await this.epistery.isListed(address, domainAdminList);
         console.log(`[message-board] Domain admin check result:`, isDomainAdmin);
 
         if (isDomainAdmin) {
           // Fetch user's display name from white-list
-          const userName = await this.getUserName(req, address, domainList);
+          const userName = await this.getUserName(req, address, domainAdminList);
           console.log(`[message-board] User ${address} allowed as domain admin (name: ${userName})`);
           return {
             allowed: true,
@@ -422,23 +423,13 @@ export default class MessageBoardAgent {
       };
     }
 
-    // 4. Check notabot score (lowest tier)
-    // TODO: Implement notabot score check
-    // For now, since notabot is not implemented, return helpful message
-    const notabotPoints = 0; // await this.getNotabotPoints(address);
-
-    if (notabotPoints >= this.minNotabotPoints) {
-      return {
-        allowed: true,
-        user: { address, name: verification.name },
-        method: 'notabot',
-        points: notabotPoints
-      };
-    }
-
+    // 4. Default: Allow all authenticated users (simplified for v1.0)
+    // Notabot points are collected but not enforced - agents can add their own rules later
+    console.log(`[message-board] User ${address} allowed as authenticated user`);
     return {
-      allowed: false,
-      reason: `You need ${this.minNotabotPoints} notabot points to post (you have ${notabotPoints}), or be added to the posting whitelist`
+      allowed: true,
+      user: { address, name: verification.name },
+      method: 'authenticated'
     };
   }
 
@@ -529,23 +520,15 @@ export default class MessageBoardAgent {
 
       console.log('[message-board] verifySameDomainAuth - checking address:', address);
 
-      // Verify this address is the domain admin (owns the domain)
+      // Verify this address is on domain admin white-list
+      // Format: {resource}::{role} where resource is domain name, role is access level
       if (this.epistery) {
-        // Check standard domain list format: domain::{domain}
-        const isDomainMember = await this.isListedCaseInsensitive(address, `domain::${req.domain}`);
-        if (isDomainMember) {
-          console.log('[message-board] Same-domain auth successful for domain member');
-          return { valid: true, address, isDomainMember: true };
-        }
-
-        // Also check alternative admin list format for backwards compatibility
         const isDomainAdmin = await this.isListedCaseInsensitive(address, `${req.domain}::admin`);
         if (isDomainAdmin) {
           console.log('[message-board] Same-domain auth successful for domain admin');
           return { valid: true, address, isDomainAdmin: true };
         }
 
-        // Also check global admin
         const isGlobalAdmin = await this.isListedCaseInsensitive(address, 'epistery::admin');
         if (isGlobalAdmin) {
           console.log('[message-board] Same-domain auth successful for global admin');
