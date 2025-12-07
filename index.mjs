@@ -339,13 +339,25 @@ export default class MessageBoardAgent {
    * Hierarchy: Global Admin > Domain Admin > Posting Whitelist > Notabot Points
    */
   async checkPostingPermission(req) {
-    const verification = await this.verifyDelegationToken(req);
+    // First try same-domain authentication (simpler, no delegation needed)
+    const sameDomainAuth = await this.verifySameDomainAuth(req);
+    let address, verification;
 
-    if (!verification.valid) {
-      return { allowed: false, reason: 'No valid delegation token found' };
+    if (sameDomainAuth.valid) {
+      address = sameDomainAuth.address;
+      verification = sameDomainAuth;
+      console.log(`[message-board] Using same-domain auth for ${address}`);
+    } else {
+      // Fallback to delegation token (for cross-domain scenarios)
+      verification = await this.verifyDelegationToken(req);
+
+      if (!verification.valid) {
+        return { allowed: false, reason: 'No valid authentication found' };
+      }
+
+      address = verification.rivetAddress;
+      console.log(`[message-board] Using delegation token for ${address}`);
     }
-
-    const address = verification.rivetAddress;
 
     // Check permission hierarchy
     if (this.epistery) {
@@ -501,6 +513,44 @@ export default class MessageBoardAgent {
   /**
    * Verify delegation token from request
    */
+  /**
+   * Verify same-domain authentication (user's wallet address from header)
+   * For same-domain scenarios, we trust the address if user is domain admin
+   */
+  async verifySameDomainAuth(req) {
+    try {
+      const address = req.headers['x-wallet-address'];
+
+      if (!address) {
+        return { valid: false, error: 'No wallet address provided' };
+      }
+
+      console.log('[message-board] verifySameDomainAuth - checking address:', address);
+
+      // Verify this address is the domain admin (owns the domain)
+      if (this.epistery) {
+        const isDomainAdmin = await this.epistery.isListed(address, `${req.domain}::admin`);
+        if (isDomainAdmin) {
+          console.log('[message-board] Same-domain auth successful for domain admin');
+          return { valid: true, address, isDomainAdmin: true };
+        }
+
+        // Also check global admin
+        const isGlobalAdmin = await this.epistery.isListed(address, 'epistery::admin');
+        if (isGlobalAdmin) {
+          console.log('[message-board] Same-domain auth successful for global admin');
+          return { valid: true, address, isGlobalAdmin: true };
+        }
+      }
+
+      console.log('[message-board] Same-domain auth failed - not an admin');
+      return { valid: false, error: 'Not authorized' };
+    } catch (error) {
+      console.error('[message-board] Same-domain auth error:', error);
+      return { valid: false, error: error.message };
+    }
+  }
+
   async verifyDelegationToken(req) {
     try {
       const delegationHeader = req.headers['x-epistery-delegation'];

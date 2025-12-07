@@ -35,10 +35,38 @@ async function init() {
   // Setup event listeners
   setupEventListeners();
 
+  // Ensure wallet exists (auto-create if needed)
+  await ensureWallet();
+
   // Check authentication status
   checkAuthStatus();
 
   console.log('[message-board] Ready');
+}
+
+// Ensure wallet exists, auto-creating if necessary
+async function ensureWallet() {
+  try {
+    // Check if wallet already exists in localStorage
+    const data = localStorage.getItem('epistery');
+    if (data) {
+      const parsed = JSON.parse(data);
+      if (parsed.wallets && parsed.wallets.length > 0) {
+        console.log('[message-board] Wallet already exists');
+        return;
+      }
+    }
+
+    // No wallet exists - auto-create one silently using Witness
+    console.log('[message-board] No wallet found, creating one...');
+    const WitnessModule = await import('/lib/witness.js');
+    const Witness = WitnessModule.default;
+    await Witness.connect();
+    console.log('[message-board] Wallet created successfully');
+  } catch (error) {
+    console.log('[message-board] Could not auto-create wallet:', error.message);
+    // Not critical - user can still view posts
+  }
 }
 
 // Check authentication and update UI
@@ -102,12 +130,12 @@ async function checkAuthStatus() {
     console.error('[message-board] Error checking localStorage:', e);
   }
 
-  // No wallet in localStorage - show helpful sign-in message
+  // No wallet in localStorage - show guest status
   statusEl.className = 'user-status guest';
   statusEl.innerHTML = `
-    👁️ Viewing as guest - <a href="/status" style="color: inherit; text-decoration: underline;">Create/Connect Wallet</a> to post
+    👁️ Viewing as guest
     <div style="margin-top: 8px; font-size: 12px; opacity: 0.8;">
-      Click above to auto-create a secure wallet for this domain (takes 1 second)
+      <a href="/status" style="color: inherit; text-decoration: underline;">View wallet & admin settings</a>
     </div>
   `;
 }
@@ -249,9 +277,15 @@ window.addComment = async function(postId) {
   if (!text) return;
 
   try {
+    // Add wallet address header for same-domain authentication
+    const headers = { 'Content-Type': 'application/json' };
+    if (currentUser && currentUser.address) {
+      headers['X-Wallet-Address'] = currentUser.address;
+    }
+
     const response = await fetch(`/agent/epistery/message-board/api/posts/${postId}/comments`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       credentials: 'include',
       body: JSON.stringify({ text })
     });
@@ -279,8 +313,15 @@ window.deletePost = async function(postId) {
   if (!confirm('Delete this post?')) return;
 
   try {
+    // Add wallet address header for same-domain authentication
+    const headers = {};
+    if (currentUser && currentUser.address) {
+      headers['X-Wallet-Address'] = currentUser.address;
+    }
+
     const response = await fetch(`/agent/epistery/message-board/api/posts/${postId}`, {
       method: 'DELETE',
+      headers,
       credentials: 'include'
     });
 
@@ -348,9 +389,15 @@ async function createPost() {
       image: imagePreview.style.display !== 'none' ? imagePreview.src : null
     };
 
+    // Add wallet address header for same-domain authentication
+    const headers = { 'Content-Type': 'application/json' };
+    if (currentUser && currentUser.address) {
+      headers['X-Wallet-Address'] = currentUser.address;
+    }
+
     const response = await fetch('/agent/epistery/message-board/api/posts', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       credentials: 'include',
       body: JSON.stringify(body)
     });
