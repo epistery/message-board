@@ -42,8 +42,33 @@ async function init() {
 }
 
 // Check authentication and update UI
-function checkAuthStatus() {
-  // Check for delegation token in cookies
+async function checkAuthStatus() {
+  const statusEl = document.getElementById('user-status');
+
+  try {
+    // Try to connect via Witness (same-domain auth via localStorage)
+    const WitnessModule = await import('/lib/witness.js');
+    const Witness = WitnessModule.default;
+    const witness = await Witness.connect();
+    const status = witness.getStatus();
+
+    if (status.client && status.client.address) {
+      const address = status.client.address;
+
+      statusEl.className = 'user-status authenticated';
+      statusEl.innerHTML = `
+        ✓ Authenticated as <strong class="clickable-address" onclick="copyAddress('${address}')" style="cursor: pointer; text-decoration: underline;" title="Click to copy">${address}</strong>
+        <span style="margin-left: 10px; font-size: 12px; opacity: 0.8;">You can post and comment</span>
+      `;
+
+      currentUser = { address };
+      return;
+    }
+  } catch (e) {
+    console.log('[message-board] Witness not available, trying delegation cookie:', e.message);
+  }
+
+  // Fallback: Check for delegation token in cookies (for cross-domain scenarios)
   const cookies = document.cookie.split(';');
   let token = null;
 
@@ -59,8 +84,6 @@ function checkAuthStatus() {
     }
   }
 
-  const statusEl = document.getElementById('user-status');
-
   if (token && token.delegation) {
     const address = token.delegation.subject;
 
@@ -72,11 +95,10 @@ function checkAuthStatus() {
 
     currentUser = { address };
   } else {
+    // Not authenticated - show sign in link
     statusEl.className = 'user-status guest';
-    const currentDomain = window.location.hostname;
-    const returnUrl = encodeURIComponent(window.location.href);
     statusEl.innerHTML = `
-      👁️ Viewing as guest - <a href="/.well-known/epistery/delegate?domain=${currentDomain}&return=${returnUrl}" style="color: inherit; text-decoration: underline;">Sign in</a> to post
+      👁️ Viewing as guest - <a href="/status" style="color: inherit; text-decoration: underline;">Connect Wallet</a> to post
     `;
   }
 }
