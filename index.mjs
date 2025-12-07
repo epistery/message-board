@@ -527,18 +527,20 @@ export default class MessageBoardAgent {
         return { valid: false, error: 'No wallet address provided' };
       }
 
-      console.log('[message-board] verifySameDomainAuth - checking address:', address);
+      // Normalize address to lowercase for comparison (Ethereum addresses are case-insensitive)
+      const normalizedAddress = address.toLowerCase();
+      console.log('[message-board] verifySameDomainAuth - checking address:', normalizedAddress);
 
       // Verify this address is the domain admin (owns the domain)
       if (this.epistery) {
-        const isDomainAdmin = await this.epistery.isListed(address, `${req.domain}::admin`);
+        const isDomainAdmin = await this.epistery.isListed(normalizedAddress, `${req.domain}::admin`);
         if (isDomainAdmin) {
           console.log('[message-board] Same-domain auth successful for domain admin');
           return { valid: true, address, isDomainAdmin: true };
         }
 
         // Also check global admin
-        const isGlobalAdmin = await this.epistery.isListed(address, 'epistery::admin');
+        const isGlobalAdmin = await this.epistery.isListed(normalizedAddress, 'epistery::admin');
         if (isGlobalAdmin) {
           console.log('[message-board] Same-domain auth successful for global admin');
           return { valid: true, address, isGlobalAdmin: true };
