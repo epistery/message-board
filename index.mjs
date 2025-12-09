@@ -189,8 +189,6 @@ export default class MessageBoardAgent {
     router.post('/api/posts', async (req, res) => {
       try {
         console.log('[message-board] Received post request');
-        console.log('[message-board] Cookies:', req.cookies);
-        console.log('[message-board] Headers:', req.headers['x-epistery-delegation'] ? 'Has delegation header' : 'No delegation header');
 
         const { text, image } = req.body;
 
@@ -242,6 +240,21 @@ export default class MessageBoardAgent {
       } catch (error) {
         console.error('[message-board] Post error:', error);
         console.error('[message-board] Stack trace:', error.stack);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Check if user has posting permission (without actually posting)
+    router.post('/api/check-permission', async (req, res) => {
+      try {
+        const permission = await this.checkPostingPermission(req);
+        res.json({
+          canPost: permission.allowed,
+          reason: permission.reason,
+          user: permission.user
+        });
+      } catch (error) {
+        console.error('[message-board] Permission check error:', error);
         res.status(500).json({ error: error.message });
       }
     });
@@ -337,9 +350,10 @@ export default class MessageBoardAgent {
   /**
    * Check if user has permission to post
    * Hierarchy: Global Admin > Domain Admin > Posting Whitelist > Notabot Points
+   * NOTE: Authentication not implemented - delegation removed
    */
   async checkPostingPermission(req) {
-    // First try same-domain authentication (simpler, no delegation needed)
+    // Try same-domain authentication
     const sameDomainAuth = await this.verifySameDomainAuth(req);
     let address, verification;
 
@@ -348,15 +362,8 @@ export default class MessageBoardAgent {
       verification = sameDomainAuth;
       console.log(`[message-board] Using same-domain auth for ${address}`);
     } else {
-      // Fallback to delegation token (for cross-domain scenarios)
-      verification = await this.verifyDelegationToken(req);
-
-      if (!verification.valid) {
-        return { allowed: false, reason: 'No valid authentication found' };
-      }
-
-      address = verification.rivetAddress;
-      console.log(`[message-board] Using delegation token for ${address}`);
+      console.log('[message-board] No valid authentication - delegation removed');
+      return { allowed: false, reason: 'Authentication not implemented' };
     }
 
     // Check permission hierarchy
@@ -446,16 +453,7 @@ export default class MessageBoardAgent {
       const url = `http://localhost:${process.env.PORT || 4080}/agent/epistery/white-list/list?list=${encodeURIComponent(listName)}`;
       console.log(`[message-board] Fetching user name from: ${url}`);
 
-      // Get delegation token from request
-      const delegationCookie = req.cookies?.epistery_delegation;
-      const delegationHeader = req.headers['x-epistery-delegation'];
-      const delegationToken = delegationHeader || delegationCookie;
-
-      const response = await fetch(url, {
-        headers: {
-          'Cookie': `epistery_delegation=${typeof delegationToken === 'string' ? delegationToken : JSON.stringify(delegationToken)}`
-        }
-      });
+      const response = await fetch(url);
 
       if (!response.ok) {
         console.error(`[message-board] Failed to fetch members from ${listName}: ${response.status}`);
@@ -554,64 +552,13 @@ export default class MessageBoardAgent {
     return list.some(entry => entry.addr.toLowerCase() === addressLower);
   }
 
+  /**
+   * Authentication not implemented - delegation tokens removed
+   * TODO: Implement direct rivet authentication
+   */
   async verifyDelegationToken(req) {
-    try {
-      const delegationHeader = req.headers['x-epistery-delegation'];
-      const delegationCookie = req.cookies?.epistery_delegation;
-
-      console.log('[message-board] verifyDelegationToken - has header:', !!delegationHeader);
-      console.log('[message-board] verifyDelegationToken - has cookie:', !!delegationCookie);
-      console.log('[message-board] verifyDelegationToken - req.cookies:', req.cookies);
-
-      const tokenData = delegationHeader || delegationCookie;
-
-      if (!tokenData) {
-        console.log('[message-board] No delegation token provided');
-        return { valid: false, error: 'No delegation token provided' };
-      }
-
-      const token = typeof tokenData === 'string' ? JSON.parse(tokenData) : tokenData;
-      const { delegation, signature } = token;
-
-      if (!delegation) {
-        console.log('[message-board] Token missing delegation field');
-        return { valid: false, error: 'Token missing delegation field' };
-      }
-
-      // 1. Check expiration
-      if (Date.now() > delegation.expires) {
-        console.log('[message-board] Token expired');
-        return { valid: false, error: 'Token expired' };
-      }
-
-      // 2. Verify domain matches request origin
-      const requestDomain = req.hostname || req.get('host')?.split(':')[0];
-      console.log('[message-board] Request domain:', requestDomain, 'Token audience:', delegation.audience);
-
-      if (delegation.audience !== requestDomain) {
-        console.log('[message-board] Token audience mismatch');
-        return { valid: false, error: 'Token audience mismatch' };
-      }
-
-      // 3. Verify signature
-      // TODO: Implement actual signature verification with rivet public key
-      if (!delegation.subject || !signature) {
-        console.log('[message-board] Invalid token structure');
-        return { valid: false, error: 'Invalid token structure' };
-      }
-
-      console.log('[message-board] Token verified successfully for:', delegation.subject);
-      return {
-        valid: true,
-        rivetAddress: delegation.subject,
-        domain: delegation.audience,
-        scope: delegation.scope,
-        name: delegation.name
-      };
-    } catch (error) {
-      console.error('[message-board] Token verification exception:', error);
-      return { valid: false, error: `Token verification failed: ${error.message}` };
-    }
+    console.log('[message-board] Authentication not implemented - delegation removed');
+    return { valid: false, error: 'Authentication not implemented' };
   }
 
   /**

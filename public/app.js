@@ -117,10 +117,12 @@ async function checkAuthStatus() {
         statusEl.className = 'user-status authenticated';
         statusEl.innerHTML = `
           ✓ Authenticated as <strong class="clickable-address" onclick="copyAddress('${address}')" style="cursor: pointer; text-decoration: underline;" title="Click to copy">${address}</strong>
-          <span style="margin-left: 10px; font-size: 12px; opacity: 0.8;">You can post and comment</span>
         `;
 
         currentUser = { address };
+
+        // Check if user has posting permission
+        await checkPostingPermission(address);
         return;
       } else {
         console.log('[message-board] No valid wallet address found in structure');
@@ -189,14 +191,17 @@ function renderPost(post) {
     ? `<img src="${post.image}" class="post-image" alt="Post image">`
     : '';
 
+  const pendingStyle = post.pending ? 'opacity: 0.7;' : '';
+  const pendingBadge = post.pending ? '<span style="color: #ffa500; font-size: 12px; margin-left: 8px;">⏳ Pending confirmation...</span>' : '';
+
   return `
-    <div class="post" data-post-id="${post.id}">
+    <div class="post" data-post-id="${post.id}" style="${pendingStyle}">
       <div class="post-header">
         <div>
           <div class="post-author">${post.authorName || shortAddress}</div>
           ${post.authorName ? `<div class="post-address clickable-address" onclick="copyAddress('${post.author}')" title="Click to copy full address">${shortAddress}</div>` : `<div class="post-address clickable-address" onclick="copyAddress('${post.author}')" title="Click to copy full address">${post.author}</div>`}
         </div>
-        <div class="post-time">${timeAgo}</div>
+        <div class="post-time">${timeAgo}${pendingBadge}</div>
       </div>
       <div class="post-text">${escapeHtml(post.text)}</div>
       ${imageHtml}
@@ -406,6 +411,13 @@ async function createPost() {
       const contentType = response.headers.get('content-type');
       if (contentType && contentType.includes('application/json')) {
         const error = await response.json();
+
+        // Handle 403 - show request access option
+        if (response.status === 403 && currentUser && currentUser.address) {
+          showRequestAccessDialog(currentUser.address, error.error || 'You do not have permission to post');
+          return;
+        }
+
         throw new Error(error.error || 'Failed to post');
       } else {
         const text = await response.text();
@@ -414,14 +426,30 @@ async function createPost() {
       }
     }
 
+    // Create optimistic post to show immediately
+    const optimisticPost = {
+      id: Date.now(), // temporary ID
+      text,
+      image: imagePreview.style.display !== 'none' ? imagePreview.src : null,
+      author: currentUser.address,
+      authorName: currentUser.name,
+      timestamp: new Date().toISOString(),
+      comments: [],
+      pending: true // mark as pending confirmation
+    };
+
+    // Add to posts array at the beginning
+    posts.unshift(optimisticPost);
+    renderPosts();
+
     // Clear form
     postText.value = '';
     imagePreview.style.display = 'none';
     imagePreview.src = '';
     document.getElementById('image-input').value = '';
 
-    // Reload posts
-    await loadPosts();
+    // Reload posts to get the confirmed version
+    setTimeout(() => loadPosts(), 2000);
   } catch (error) {
     console.error('[message-board] Post error:', error);
     showError(error.message);
@@ -523,6 +551,200 @@ function escapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
+}
+
+// Show request access dialog
+function showRequestAccessDialog(address, reason) {
+  const container = document.getElementById('error-container');
+  const dialog = document.createElement('div');
+  dialog.className = 'error-message';
+  dialog.style.cssText = 'padding: 20px; max-width: 500px;';
+  dialog.innerHTML = `
+    <div style="margin-bottom: 12px;">
+      <strong>⚠️ Access Required</strong>
+    </div>
+    <p style="margin: 10px 0;">${escapeHtml(reason)}</p>
+    <p style="margin: 10px 0; font-size: 14px; opacity: 0.9;">
+      Your address: <code>${address.substring(0, 8)}...${address.substring(address.length - 6)}</code>
+    </p>
+    <div style="margin-top: 15px; display: flex; gap: 10px;">
+      <button id="request-access-btn" style="padding: 8px 16px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">
+        Request Access
+      </button>
+      <button id="cancel-request-btn" style="padding: 8px 16px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">
+        Cancel
+      </button>
+    </div>
+  `;
+  container.appendChild(dialog);
+
+  document.getElementById('request-access-btn').addEventListener('click', async () => {
+    try {
+      await requestAccess(address);
+      dialog.innerHTML = `
+        <div style="margin-bottom: 12px;">
+          <strong>✓ Request Submitted</strong>
+        </div>
+        <p style="margin: 10px 0;">
+          Your access request has been submitted to the domain administrators.
+          You will be notified when your request is approved.
+        </p>
+      `;
+      setTimeout(() => dialog.remove(), 5000);
+    } catch (error) {
+      showError('Failed to submit access request: ' + error.message);
+      dialog.remove();
+    }
+  });
+
+  document.getElementById('cancel-request-btn').addEventListener('click', () => {
+    dialog.remove();
+  });
+}
+
+// Request access from white-list agent
+// Check if user has posting permission
+async function checkPostingPermission(address) {
+  try {
+    // Make a test request to check permissions without actually posting
+    const response = await fetch('/agent/epistery/message-board/api/check-permission', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Wallet-Address': address
+      },
+      credentials: 'include'
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      if (!data.canPost) {
+        // Wait for DOM to be ready
+        const waitForElement = setInterval(() => {
+          const container = document.getElementById('create-post');
+          if (container) {
+            clearInterval(waitForElement);
+            showWelcomeBox(address);
+          }
+        }, 100);
+      }
+    }
+  } catch (error) {
+    console.log('[message-board] Permission check failed:', error);
+  }
+}
+
+// Show welcome box for users without posting permission
+function showWelcomeBox(address) {
+  const container = document.getElementById('create-post');
+  if (!container) {
+    console.error('[message-board] create-post element not found');
+    return;
+  }
+  container.innerHTML = `
+    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 12px; color: white; text-align: center;">
+      <h2 style="margin: 0 0 15px 0; font-size: 24px;">Welcome to the Message Board! 👋</h2>
+      <p style="margin: 0 0 20px 0; font-size: 16px; opacity: 0.95;">
+        You're authenticated, but you'll need access to post messages.
+      </p>
+      <button
+        onclick="showRequestAccessForm()"
+        style="background: white; color: #667eea; border: none; padding: 12px 30px; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.1);"
+      >
+        Request Access to Post
+      </button>
+    </div>
+  `;
+}
+
+// Show request access form
+window.showRequestAccessForm = function() {
+  const container = document.getElementById('create-post');
+  container.innerHTML = `
+    <div style="background: #f8f9fa; padding: 25px; border-radius: 12px; border: 2px solid #667eea;">
+      <h3 style="margin: 0 0 15px 0; color: #333;">Request Posting Access</h3>
+      <p style="margin: 0 0 15px 0; color: #666; font-size: 14px;">
+        Tell the administrators why you'd like to post on this message board.
+      </p>
+      <textarea
+        id="access-request-message"
+        placeholder="e.g., I'd like to contribute to discussions about..."
+        style="width: 100%; min-height: 100px; padding: 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; font-family: inherit; resize: vertical;"
+      ></textarea>
+      <div style="display: flex; gap: 10px; margin-top: 15px;">
+        <button
+          onclick="submitAccessRequest()"
+          style="flex: 1; background: #667eea; color: white; border: none; padding: 12px; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer;"
+        >
+          Submit Request
+        </button>
+        <button
+          onclick="showWelcomeBox('${currentUser.address}')"
+          style="flex: 0 0 auto; background: #6c757d; color: white; border: none; padding: 12px 20px; border-radius: 8px; font-size: 16px; cursor: pointer;"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  `;
+  document.getElementById('access-request-message').focus();
+};
+
+// Submit access request
+window.submitAccessRequest = async function() {
+  const messageInput = document.getElementById('access-request-message');
+  const message = messageInput.value.trim();
+
+  if (!message) {
+    alert('Please provide a message explaining why you need access');
+    return;
+  }
+
+  try {
+    await requestAccess(currentUser.address, message);
+
+    const container = document.getElementById('create-post');
+    container.innerHTML = `
+      <div style="background: #d4edda; padding: 25px; border-radius: 12px; border: 2px solid #28a745; text-align: center;">
+        <h3 style="margin: 0 0 10px 0; color: #155724;">✓ Request Submitted!</h3>
+        <p style="margin: 0; color: #155724; font-size: 14px;">
+          Your access request has been sent to the administrators. You'll be able to post once they approve your request.
+        </p>
+      </div>
+    `;
+  } catch (error) {
+    alert('Failed to submit request: ' + error.message);
+  }
+};
+
+async function requestAccess(address, customMessage) {
+  const hostname = window.location.hostname;
+  const listName = `${hostname}::admin`;
+
+  const response = await fetch('/agent/epistery/white-list/request-access', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      address,
+      listName,
+      agentName: 'message-board',
+      message: customMessage || 'Requesting access to post on message board'
+    })
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Request failed');
+  }
+
+  const result = await response.json();
+  if (!result.success) {
+    throw new Error(result.error || 'Request failed');
+  }
+
+  return result;
 }
 
 // Start app when DOM is ready
