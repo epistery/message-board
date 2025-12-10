@@ -225,7 +225,7 @@ export default class MessageBoardAgent {
         this.writeData(req.domain, data);
 
         // Broadcast immediately
-        this.broadcast({ type: 'new-post', post });
+        this.broadcast({ type: 'new-post', post }, req.domain);
 
         // Send response to user immediately
         res.json(post);
@@ -302,7 +302,7 @@ export default class MessageBoardAgent {
         post.comments.push(comment);
         this.writeData(req.domain, data);
 
-        this.broadcast({ type: 'new-comment', postId, comment });
+        this.broadcast({ type: 'new-comment', postId, comment }, req.domain);
         res.json(comment);
       } catch (error) {
         console.error('[message-board] Comment error:', error);
@@ -331,7 +331,7 @@ export default class MessageBoardAgent {
         data.posts.splice(index, 1);
         this.writeData(req.domain, data);
 
-        this.broadcast({ type: 'delete-post', postId });
+        this.broadcast({ type: 'delete-post', postId }, req.domain);
         res.json({ success: true });
       } catch (error) {
         console.error('[message-board] Delete error:', error);
@@ -584,13 +584,13 @@ export default class MessageBoardAgent {
   }
 
   /**
-   * Broadcast message to all WebSocket clients
+   * Broadcast message to WebSocket clients on a specific domain
    */
-  broadcast(message) {
+  broadcast(message, domain) {
     if (!this.wss) return;
 
     this.wss.clients.forEach(client => {
-      if (client.readyState === 1) { // OPEN
+      if (client.readyState === 1 && client.domain === domain) {
         client.send(JSON.stringify(message));
       }
     });
@@ -603,11 +603,13 @@ export default class MessageBoardAgent {
   initWebSocket(server) {
     this.wss = new WebSocketServer({ server, path: '/agent/epistery/message-board/ws' });
 
-    this.wss.on('connection', (ws) => {
-      console.log('[message-board] WebSocket client connected');
+    this.wss.on('connection', (ws, req) => {
+      // Track which domain this client connected from
+      ws.domain = req.headers.host?.split(':')[0];
+      console.log(`[message-board] WebSocket client connected from ${ws.domain}`);
 
       ws.on('close', () => {
-        console.log('[message-board] WebSocket client disconnected');
+        console.log(`[message-board] WebSocket client disconnected from ${ws.domain}`);
       });
     });
 
