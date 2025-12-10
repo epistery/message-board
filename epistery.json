@@ -1,5 +1,6 @@
 {
   "name": "@epistery/message-board",
+  "title": "Message board",
   "version": "0.1.0",
   "description": "Community message board with whitelist and notabot access control",
   "author": "Epistery",
