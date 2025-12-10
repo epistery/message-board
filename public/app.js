@@ -3,34 +3,15 @@ let posts = [];
 let ws = null;
 let currentUser = null;
 
-// Load navigation menu dynamically
-async function loadNavMenu() {
-  try {
-    const response = await fetch('/api/nav-menu');
-    const html = await response.text();
-    const nav = document.querySelector('nav.container');
-    const existingMenu = document.getElementById('nav-menu');
-    if (existingMenu) {
-      existingMenu.remove();
-    }
-    nav.insertAdjacentHTML('beforeend', html);
-  } catch (error) {
-    console.error('Failed to load navigation menu:', error);
-  }
-}
-
 // Initialize
 async function init() {
   console.log('[message-board] Initializing...');
 
-  // Load navigation menu
-  await loadNavMenu();
-
   // Load posts
   await loadPosts();
 
-  // Connect WebSocket for real-time updates (disabled - not critical for functionality)
-  // connectWebSocket();
+  // Connect WebSocket for real-time updates
+  connectWebSocket();
 
   // Setup event listeners
   setupEventListeners();
@@ -71,8 +52,6 @@ async function ensureWallet() {
 
 // Check authentication and update UI
 async function checkAuthStatus() {
-  const statusEl = document.getElementById('user-status');
-
   // Try to get wallet address from localStorage (same-domain as home page)
   try {
     console.log('[message-board] Checking localStorage for epistery wallet...');
@@ -114,11 +93,6 @@ async function checkAuthStatus() {
         const address = wallet.rivetAddress || wallet.address;
         console.log('[message-board] Authenticated as:', address);
 
-        statusEl.className = 'user-status authenticated';
-        statusEl.innerHTML = `
-          ✓ Authenticated as <strong class="clickable-address" onclick="copyAddress('${address}')" style="cursor: pointer; text-decoration: underline;" title="Click to copy">${address}</strong>
-        `;
-
         currentUser = { address };
 
         // Check if user has posting permission
@@ -132,27 +106,68 @@ async function checkAuthStatus() {
     console.error('[message-board] Error checking localStorage:', e);
   }
 
-  // No wallet in localStorage - show guest status
-  statusEl.className = 'user-status guest';
-  statusEl.innerHTML = `
-    👁️ Viewing as guest
-    <div style="margin-top: 8px; font-size: 12px; opacity: 0.8;">
-      <a href="/status" style="color: inherit; text-decoration: underline;">View wallet & admin settings</a>
-    </div>
-  `;
+  // No wallet in localStorage - show request access form
+  showGuestAccessRequest();
 }
 
-// Load posts from API
+// Load posts from API or localStorage
 async function loadPosts() {
   try {
+    // First, try to load from localStorage for instant display
+    const cachedPosts = localStorage.getItem('message-board-posts');
+    if (cachedPosts) {
+      try {
+        posts = JSON.parse(cachedPosts);
+        renderPosts();
+        console.log('[message-board] Loaded posts from localStorage cache');
+      } catch (e) {
+        console.error('[message-board] Failed to parse cached posts:', e);
+      }
+    }
+
+    // Then fetch fresh data from server
     const response = await fetch('/agent/epistery/message-board/api/posts');
     if (!response.ok) throw new Error('Failed to load posts');
 
     posts = await response.json();
+    savePosts();
     renderPosts();
   } catch (error) {
     console.error('[message-board] Load error:', error);
-    showError('Failed to load posts: ' + error.message);
+    // If we have cached posts, don't show error
+    if (!posts || posts.length === 0) {
+      showError('Failed to load posts: ' + error.message);
+    }
+  }
+}
+
+// Save posts to localStorage (limit to most recent 50 posts to avoid quota issues)
+function savePosts() {
+  try {
+    // Only cache the most recent 50 posts (without images to save space)
+    const postsToCache = posts.slice(0, 50).map(post => ({
+      id: post.id,
+      text: post.text,
+      author: post.author,
+      authorName: post.authorName,
+      timestamp: post.timestamp,
+      comments: post.comments,
+      // Omit image data from cache to save space
+      image: null
+    }));
+    localStorage.setItem('message-board-posts', JSON.stringify(postsToCache));
+    console.log(`[message-board] Saved ${postsToCache.length} posts to localStorage`);
+  } catch (error) {
+    if (error.name === 'QuotaExceededError') {
+      console.warn('[message-board] localStorage quota exceeded, clearing cache');
+      try {
+        localStorage.removeItem('message-board-posts');
+      } catch (e) {
+        // Ignore errors when clearing
+      }
+    } else {
+      console.error('[message-board] Failed to save posts to localStorage:', error);
+    }
   }
 }
 
@@ -178,6 +193,7 @@ function renderPost(post) {
   const date = new Date(post.timestamp);
   const timeAgo = getTimeAgo(date);
   const shortAddress = post.author.substring(0, 8) + '...' + post.author.substring(post.author.length - 6);
+  const avatar = generateAvatar(post.author, 40);
 
   const commentsHtml = post.comments && post.comments.length > 0
     ? `
@@ -194,14 +210,21 @@ function renderPost(post) {
   const pendingStyle = post.pending ? 'opacity: 0.7;' : '';
   const pendingBadge = post.pending ? '<span style="color: #ffa500; font-size: 12px; margin-left: 8px;">⏳ Pending confirmation...</span>' : '';
 
+  // Format: "Name (0xShort...Address)" or just "(0xShort...Address)" if no name
+  const authorDisplay = post.authorName
+    ? `${escapeHtml(post.authorName)} <span class="clickable-address" onclick="copyAddress('${post.author}')" title="Click to copy full address">(${shortAddress})</span>`
+    : `<span class="clickable-address" onclick="copyAddress('${post.author}')" title="Click to copy full address">${shortAddress}</span>`;
+
   return `
     <div class="post" data-post-id="${post.id}" style="${pendingStyle}">
       <div class="post-header">
-        <div>
-          <div class="post-author">${post.authorName || shortAddress}</div>
-          ${post.authorName ? `<div class="post-address clickable-address" onclick="copyAddress('${post.author}')" title="Click to copy full address">${shortAddress}</div>` : `<div class="post-address clickable-address" onclick="copyAddress('${post.author}')" title="Click to copy full address">${post.author}</div>`}
+        <div class="post-author-section">
+          <img src="${avatar}" class="avatar" alt="Avatar">
+          <div>
+            <div class="post-author">${authorDisplay}</div>
+            <div class="post-time">${timeAgo}${pendingBadge}</div>
+          </div>
         </div>
-        <div class="post-time">${timeAgo}${pendingBadge}</div>
       </div>
       <div class="post-text">${escapeHtml(post.text)}</div>
       ${imageHtml}
@@ -223,14 +246,25 @@ function renderComment(comment) {
   const date = new Date(comment.timestamp);
   const timeAgo = getTimeAgo(date);
   const shortAddress = comment.author.substring(0, 8) + '...' + comment.author.substring(comment.author.length - 6);
+  const avatar = generateAvatar(comment.author, 32);
+
+  // Format: "Name (0xShort...Address)" or just "(0xShort...Address)" if no name
+  const authorDisplay = comment.authorName
+    ? `${escapeHtml(comment.authorName)} <span class="clickable-address" onclick="copyAddress('${comment.author}')" title="Click to copy full address">(${shortAddress})</span>`
+    : `<span class="clickable-address" onclick="copyAddress('${comment.author}')" title="Click to copy full address">${shortAddress}</span>`;
 
   return `
     <div class="comment">
-      <div class="comment-header">
-        <span class="comment-author">${comment.authorName || shortAddress}</span>
-        <span class="comment-time">${timeAgo}</span>
+      <div class="comment-with-avatar">
+        <img src="${avatar}" class="avatar avatar-small" alt="Avatar">
+        <div class="comment-content">
+          <div class="comment-header">
+            <span class="comment-author">${authorDisplay}</span>
+            <span class="comment-time">${timeAgo}</span>
+          </div>
+          <div class="comment-text">${escapeHtml(comment.text)}</div>
+        </div>
       </div>
-      <div class="comment-text">${escapeHtml(comment.text)}</div>
     </div>
   `;
 }
@@ -491,20 +525,29 @@ function handleWebSocketMessage(message) {
 
   switch (message.type) {
     case 'new-post':
-      posts.unshift(message.post);
+      // Check if this post already exists (avoid duplicates)
+      if (!posts.find(p => p.id === message.post.id)) {
+        posts.unshift(message.post);
+      }
+      savePosts();
       renderPosts();
       break;
 
     case 'new-comment':
       const post = posts.find(p => p.id === message.postId);
       if (post) {
-        post.comments.push(message.comment);
+        // Check if comment already exists (avoid duplicates)
+        if (!post.comments.find(c => c.id === message.comment.id)) {
+          post.comments.push(message.comment);
+        }
+        savePosts();
         renderPosts();
       }
       break;
 
     case 'delete-post':
       posts = posts.filter(p => p.id !== message.postId);
+      savePosts();
       renderPosts();
       break;
   }
@@ -553,12 +596,62 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
+// Generate avatar from address (deterministic)
+function generateAvatar(address, size = 40) {
+  // Create a deterministic color palette from the address
+  const hash = address.toLowerCase();
+  const seed = parseInt(hash.slice(2, 10), 16);
+
+  // Generate colors from the hash
+  const hue1 = (seed % 360);
+  const hue2 = ((seed * 7) % 360);
+  const saturation = 65 + ((seed % 20));
+  const lightness = 45 + ((seed % 15));
+
+  const color1 = `hsl(${hue1}, ${saturation}%, ${lightness}%)`;
+  const color2 = `hsl(${hue2}, ${saturation}%, ${lightness + 10}%)`;
+
+  // Create a simple geometric pattern
+  const pattern = (seed % 4); // 4 different pattern types
+
+  let svg = '';
+  switch(pattern) {
+    case 0: // Diagonal stripes
+      svg = `<svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
+        <rect width="${size}" height="${size}" fill="${color1}"/>
+        <path d="M0,0 L${size},${size} M${size/2},${-size/2} L${size*1.5},${size/2} M${-size/2},${size/2} L${size/2},${size*1.5}" stroke="${color2}" stroke-width="${size/4}"/>
+      </svg>`;
+      break;
+    case 1: // Circles
+      svg = `<svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
+        <rect width="${size}" height="${size}" fill="${color1}"/>
+        <circle cx="${size/2}" cy="${size/2}" r="${size/3}" fill="${color2}"/>
+        <circle cx="${size/2}" cy="${size/2}" r="${size/6}" fill="${color1}"/>
+      </svg>`;
+      break;
+    case 2: // Triangles
+      svg = `<svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
+        <rect width="${size}" height="${size}" fill="${color1}"/>
+        <polygon points="${size/2},${size/6} ${size*5/6},${size*5/6} ${size/6},${size*5/6}" fill="${color2}"/>
+      </svg>`;
+      break;
+    case 3: // Squares
+      svg = `<svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
+        <rect width="${size}" height="${size}" fill="${color1}"/>
+        <rect x="${size/4}" y="${size/4}" width="${size/2}" height="${size/2}" fill="${color2}" transform="rotate(45 ${size/2} ${size/2})"/>
+      </svg>`;
+      break;
+  }
+
+  return 'data:image/svg+xml;base64,' + btoa(svg);
+}
+
 // Show request access dialog
 function showRequestAccessDialog(address, reason) {
   const container = document.getElementById('error-container');
   const dialog = document.createElement('div');
   dialog.className = 'error-message';
-  dialog.style.cssText = 'padding: 20px; max-width: 500px;';
+  dialog.style.cssText = 'padding: 20px; box-sizing: border-box;';
   dialog.innerHTML = `
     <div style="margin-bottom: 12px;">
       <strong>⚠️ Access Required</strong>
@@ -580,7 +673,7 @@ function showRequestAccessDialog(address, reason) {
 
   document.getElementById('request-access-btn').addEventListener('click', async () => {
     try {
-      await requestAccess(address);
+      await requestAccess(address, 'Requesting access to post on message board', '');
       dialog.innerHTML = `
         <div style="margin-bottom: 12px;">
           <strong>✓ Request Submitted</strong>
@@ -634,6 +727,46 @@ async function checkPostingPermission(address) {
   }
 }
 
+// Show guest access request form
+function showGuestAccessRequest() {
+  const container = document.getElementById('create-post');
+  if (!container) {
+    console.error('[message-board] create-post element not found');
+    return;
+  }
+  container.innerHTML = `
+    <div style="background: #f8f9fa; padding: 25px; border-radius: 12px; border: 2px solid #667eea; box-sizing: border-box;">
+      <h3 style="margin: 0 0 10px 0; color: #333;">🔐 This site is open but requires users to request access.</h3>
+      <p style="margin: 0 0 15px 0; color: #666; font-size: 14px;">
+        Please provide your information to request access to post on this message board.
+      </p>
+      <div style="margin-bottom: 15px;">
+        <label style="display: block; margin-bottom: 5px; color: #333; font-size: 13px; font-weight: 500;">Your Name (optional)</label>
+        <input
+          type="text"
+          id="guest-request-name"
+          placeholder="e.g., John Smith"
+          style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; box-sizing: border-box;"
+        >
+      </div>
+      <div style="margin-bottom: 15px;">
+        <label style="display: block; margin-bottom: 5px; color: #333; font-size: 13px; font-weight: 500;">Message (optional)</label>
+        <textarea
+          id="guest-request-message"
+          placeholder="This is sent to the board admin"
+          style="width: 100%; min-height: 80px; padding: 10px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; font-family: inherit; resize: vertical; box-sizing: border-box;"
+        ></textarea>
+      </div>
+      <button
+        onclick="submitGuestAccessRequest()"
+        style="width: 100%; background: #667eea; color: white; border: none; padding: 12px; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer;"
+      >
+        Request Access
+      </button>
+    </div>
+  `;
+}
+
 // Show welcome box for users without posting permission
 function showWelcomeBox(address) {
   const container = document.getElementById('create-post');
@@ -642,7 +775,7 @@ function showWelcomeBox(address) {
     return;
   }
   container.innerHTML = `
-    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 12px; color: white; text-align: center;">
+    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 12px; color: white; text-align: center; box-sizing: border-box;">
       <h2 style="margin: 0 0 15px 0; font-size: 24px;">Welcome to the Message Board! 👋</h2>
       <p style="margin: 0 0 20px 0; font-size: 16px; opacity: 0.95;">
         You're authenticated, but you'll need access to post messages.
@@ -661,7 +794,7 @@ function showWelcomeBox(address) {
 window.showRequestAccessForm = function() {
   const container = document.getElementById('create-post');
   container.innerHTML = `
-    <div style="background: #f8f9fa; padding: 25px; border-radius: 12px; border: 2px solid #667eea;">
+    <div style="background: #f8f9fa; padding: 25px; border-radius: 12px; border: 2px solid #667eea; box-sizing: border-box;">
       <h3 style="margin: 0 0 15px 0; color: #333;">Request Posting Access</h3>
       <p style="margin: 0 0 15px 0; color: #666; font-size: 14px;">
         Tell the administrators why you'd like to post on this message board.
@@ -669,7 +802,7 @@ window.showRequestAccessForm = function() {
       <textarea
         id="access-request-message"
         placeholder="e.g., I'd like to contribute to discussions about..."
-        style="width: 100%; min-height: 100px; padding: 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; font-family: inherit; resize: vertical;"
+        style="width: 100%; min-height: 100px; padding: 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; font-family: inherit; resize: vertical; box-sizing: border-box;"
       ></textarea>
       <div style="display: flex; gap: 10px; margin-top: 15px;">
         <button
@@ -701,11 +834,11 @@ window.submitAccessRequest = async function() {
   }
 
   try {
-    await requestAccess(currentUser.address, message);
+    await requestAccess(currentUser.address, message, '');
 
     const container = document.getElementById('create-post');
     container.innerHTML = `
-      <div style="background: #d4edda; padding: 25px; border-radius: 12px; border: 2px solid #28a745; text-align: center;">
+      <div style="background: #d4edda; padding: 25px; border-radius: 12px; border: 2px solid #28a745; text-align: center; box-sizing: border-box;">
         <h3 style="margin: 0 0 10px 0; color: #155724;">✓ Request Submitted!</h3>
         <p style="margin: 0; color: #155724; font-size: 14px;">
           Your access request has been sent to the administrators. You'll be able to post once they approve your request.
@@ -717,7 +850,60 @@ window.submitAccessRequest = async function() {
   }
 };
 
-async function requestAccess(address, customMessage) {
+// Submit guest access request
+window.submitGuestAccessRequest = async function() {
+  const nameInput = document.getElementById('guest-request-name');
+  const messageInput = document.getElementById('guest-request-message');
+  const name = nameInput.value.trim();
+  const message = messageInput.value.trim();
+
+  try {
+    // First, ensure wallet exists (auto-create if needed)
+    console.log('[message-board] Ensuring wallet exists for guest request...');
+    const WitnessModule = await import('/lib/witness.js');
+    const Witness = WitnessModule.default;
+    await Witness.connect();
+
+    // Get the wallet address
+    const data = localStorage.getItem('epistery');
+    if (!data) {
+      throw new Error('Failed to create wallet');
+    }
+
+    const parsed = JSON.parse(data);
+    let wallet = parsed.wallets?.[0];
+    if (wallet && wallet.wallet) {
+      wallet = wallet.wallet;
+    }
+
+    if (!wallet || !wallet.address) {
+      throw new Error('Failed to get wallet address');
+    }
+
+    const address = wallet.rivetAddress || wallet.address;
+    console.log('[message-board] Guest address:', address);
+
+    // Submit access request
+    await requestAccess(address, message || 'Requesting access to post on message board', name);
+
+    // Show success message
+    const container = document.getElementById('create-post');
+    container.innerHTML = `
+      <div style="background: #d4edda; padding: 25px; border-radius: 12px; border: 2px solid #28a745; text-align: center; box-sizing: border-box;">
+        <h3 style="margin: 0 0 10px 0; color: #155724;">✓ Request Submitted!</h3>
+        <p style="margin: 0; color: #155724; font-size: 14px;">
+          Your access request has been sent to the administrators. You'll be able to post once they approve your request.
+        </p>
+        ${address ? `<p style="margin-top: 10px; font-size: 12px; color: #155724; opacity: 0.8;">Your wallet address: ${address}</p>` : ''}
+      </div>
+    `;
+  } catch (error) {
+    console.error('[message-board] Guest access request error:', error);
+    showError('Failed to submit request: ' + error.message);
+  }
+};
+
+async function requestAccess(address, customMessage, customName) {
   const hostname = window.location.hostname;
   const listName = `${hostname}::admin`;
 
@@ -730,7 +916,8 @@ async function requestAccess(address, customMessage) {
       address,
       listName,
       agentName: 'message-board',
-      message: customMessage || 'Requesting access to post on message board'
+      message: customMessage || 'Requesting access to post on message board',
+      name: customName || ''
     })
   });
 

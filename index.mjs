@@ -192,6 +192,7 @@ export default class MessageBoardAgent {
 
         const { text, image } = req.body;
 
+        //TODO: Text is not required if an image is attached
         if (!text || text.trim().length === 0) {
           return res.status(400).json({ error: 'Text is required' });
         }
@@ -223,20 +224,25 @@ export default class MessageBoardAgent {
         data.posts.unshift(post);
         this.writeData(req.domain, data);
 
-        // Add to IPFS batch chain (invisible to user)
-        // This creates Data Wallet: user owns content with cryptographic proof
-        try {
-          const chainedPost = await this.addPostToBatch(post, null); // TODO: Get user signature from client
-          if (chainedPost.ipfsHash) {
-            console.log(`[message-board] Post ${post.id} stored as Data Wallet: ${chainedPost.ipfsUrl}`);
-          }
-        } catch (error) {
-          console.error('[message-board] IPFS batching error (non-fatal):', error);
-          // Continue even if IPFS fails - local storage succeeded
-        }
-
+        // Broadcast immediately
         this.broadcast({ type: 'new-post', post });
+
+        // Send response to user immediately
         res.json(post);
+
+        // Add to IPFS batch chain asynchronously (invisible to user)
+        // This creates Data Wallet: user owns content with cryptographic proof
+        setImmediate(async () => {
+          try {
+            const chainedPost = await this.addPostToBatch(post, null, req.domain); // TODO: Get user signature from client
+            if (chainedPost.ipfsHash) {
+              console.log(`[message-board] Post ${post.id} stored as Data Wallet: ${chainedPost.ipfsUrl}`);
+            }
+          } catch (error) {
+            console.error('[message-board] IPFS batching error (non-fatal):', error);
+            // Continue even if IPFS fails - local storage succeeded
+          }
+        });
       } catch (error) {
         console.error('[message-board] Post error:', error);
         console.error('[message-board] Stack trace:', error.stack);
@@ -611,10 +617,10 @@ export default class MessageBoardAgent {
   /**
    * Create hash of post data for chain
    */
-  hashPost(post) {
+  hashPost(post, previousHash) {
     const data = JSON.stringify({
       ...post,
-      previousHash: this.lastHash
+      previousHash: previousHash
     });
     return crypto.createHash('sha256').update(data).digest('hex');
   }
@@ -684,14 +690,16 @@ export default class MessageBoardAgent {
    * Add post to batch chain
    * Returns the chained post data
    */
-  async addPostToBatch(post, userSignature) {
+  async addPostToBatch(post, userSignature, domain) {
+    const state = this.getDomainState(domain);
+
     // Create hash chain entry
-    const hash = this.hashPost(post);
+    const hash = this.hashPost(post, state.lastHash);
     const chainedPost = {
       ...post,
       hash: hash,
-      previousHash: this.lastHash,
-      chainIndex: this.postChain.length,
+      previousHash: state.lastHash,
+      chainIndex: state.postChain.length,
       userSignature: userSignature
     };
 
@@ -718,8 +726,8 @@ export default class MessageBoardAgent {
       },
       chain: {
         hash: hash,
-        previousHash: this.lastHash,
-        index: this.postChain.length
+        previousHash: state.lastHash,
+        index: state.postChain.length
       },
       timestamp: new Date().toISOString()
     };
@@ -734,17 +742,17 @@ export default class MessageBoardAgent {
     }
 
     // Add to chain
-    this.postChain.push(chainedPost);
-    this.lastHash = hash;
+    state.postChain.push(chainedPost);
+    state.lastHash = hash;
 
     // Save batch state
-    this.saveBatchState();
+    this.saveBatchState(domain);
 
-    console.log(`[message-board] Post added to batch chain. Total: ${this.postChain.length}/${this.batchThreshold}`);
+    console.log(`[message-board] Post added to batch chain for ${domain}. Total: ${state.postChain.length}/${this.batchThreshold}`);
 
     // Check if we need to flush to blockchain
-    if (this.postChain.length >= this.batchThreshold) {
-      await this.flushBatch();
+    if (state.postChain.length >= this.batchThreshold) {
+      await this.flushBatch(domain);
     }
 
     return chainedPost;
@@ -753,26 +761,28 @@ export default class MessageBoardAgent {
   /**
    * Flush batched posts to blockchain
    */
-  async flushBatch() {
-    if (this.postChain.length === 0) {
-      console.log('[message-board] No posts to flush');
+  async flushBatch(domain) {
+    const state = this.getDomainState(domain);
+
+    if (state.postChain.length === 0) {
+      console.log(`[message-board] No posts to flush for ${domain}`);
       return;
     }
 
-    console.log(`[message-board] Flushing ${this.postChain.length} posts to blockchain...`);
+    console.log(`[message-board] Flushing ${state.postChain.length} posts to blockchain for ${domain}...`);
 
     try {
       // Create batch summary
       const batchSummary = {
-        posts: this.postChain.map(p => ({
+        posts: state.postChain.map(p => ({
           id: p.id,
           hash: p.hash,
           ipfsHash: p.ipfsHash,
           author: p.author,
           timestamp: p.timestamp
         })),
-        chainRoot: this.lastHash,
-        count: this.postChain.length,
+        chainRoot: state.lastHash,
+        count: state.postChain.length,
         timestamp: Date.now()
       };
 
@@ -788,36 +798,40 @@ export default class MessageBoardAgent {
       }
 
       // Clear batch
-      this.postChain = [];
-      this.lastHash = crypto.createHash('sha256').update(this.lastHash).digest('hex');
-      this.saveBatchState();
+      state.postChain = [];
+      state.lastHash = crypto.createHash('sha256').update(state.lastHash).digest('hex');
+      this.saveBatchState(domain);
 
-      console.log('[message-board] Batch flush complete');
+      console.log(`[message-board] Batch flush complete for ${domain}`);
     } catch (error) {
-      console.error('[message-board] Batch flush error:', error);
+      console.error(`[message-board] Batch flush error for ${domain}:`, error);
     }
   }
 
   /**
    * Save batch state to file
    */
-  saveBatchState() {
+  saveBatchState(domain) {
+    const state = this.getDomainState(domain);
+    const { batchFile } = this.getDomainFiles(domain);
     const batchData = {
-      chain: this.postChain,
-      lastHash: this.lastHash,
+      chain: state.postChain,
+      lastHash: state.lastHash,
       lastFlush: Date.now()
     };
-    writeFileSync(this.batchFile, JSON.stringify(batchData, null, 2));
+    writeFileSync(batchFile, JSON.stringify(batchData, null, 2));
   }
 
   /**
    * Cleanup on shutdown (optional)
    */
   async cleanup() {
-    // Flush any pending posts
-    if (this.postChain.length > 0) {
-      console.log('[message-board] Flushing pending posts on shutdown...');
-      await this.flushBatch();
+    // Flush any pending posts for all domains
+    for (const [domain, state] of this.domainStates.entries()) {
+      if (state.postChain.length > 0) {
+        console.log(`[message-board] Flushing pending posts for ${domain} on shutdown...`);
+        await this.flushBatch(domain);
+      }
     }
 
     if (this.wss) {

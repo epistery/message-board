@@ -6,8 +6,13 @@
   <title>Message Board</title>
   <link rel="stylesheet" href="/style/static.css">
   <style>
+    * {
+      box-sizing: border-box;
+    }
+
     .board-container {
-      max-width: 800px;
+      width: 800px;
+      max-width: calc(100vw - 40px);
       margin: 0 auto;
       padding: var(--spacer3);
     }
@@ -25,33 +30,21 @@
     .board-subtitle {
       color: var(--text-color-quiet);
       font-size: 1rem;
+      margin-bottom: var(--spacer3);
     }
 
-    .user-status {
-      margin-top: var(--spacer);
-      padding: var(--spacer);
-      background: var(--bg-color-quiet-d);
-      border-radius: 6px;
-      font-size: 14px;
+    #create-post {
+      margin-bottom: var(--spacer3);
     }
 
-    .user-status.authenticated {
-      background: #d4edda;
-      color: #155724;
-      border: 1px solid #c3e6cb;
-    }
-
-    .user-status.guest {
-      background: #fff3cd;
-      color: #856404;
-      border: 1px solid #ffc107;
+    #create-post > * {
+      width: 100%;
     }
 
     .new-post-form {
       background: var(--bg-color-quiet-d);
       padding: var(--spacer2);
       border-radius: 8px;
-      margin-bottom: var(--spacer3);
       border: 1px solid var(--page-border);
     }
 
@@ -134,29 +127,45 @@
       border: 1px solid var(--page-border);
     }
 
+    .avatar {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .avatar-small {
+      width: 32px;
+      height: 32px;
+    }
+
     .post-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: start;
       margin-bottom: var(--spacer);
+    }
+
+    .post-author-section {
+      display: flex;
+      gap: var(--spacer);
+      align-items: start;
     }
 
     .post-author {
       font-weight: 600;
-      color: var(--primary);
+      color: var(--text-color);
       font-size: 14px;
+      line-height: 1.4;
     }
 
-    .post-address {
-      font-family: 'Courier New', monospace;
-      font-size: 12px;
+    .post-author .clickable-address {
+      font-weight: 400;
       color: var(--text-color-quiet);
-      margin-top: 2px;
     }
 
     .clickable-address {
       cursor: pointer;
       transition: color 0.2s;
+      font-family: 'Courier New', monospace;
+      font-size: 13px;
     }
 
     .clickable-address:hover {
@@ -167,6 +176,7 @@
     .post-time {
       font-size: 12px;
       color: var(--text-color-quiet);
+      margin-top: 2px;
     }
 
     .post-text {
@@ -230,27 +240,49 @@
       margin-bottom: var(--spacerhalf);
     }
 
+    .comment-with-avatar {
+      display: flex;
+      gap: var(--spacer);
+      align-items: start;
+    }
+
+    .comment-content {
+      flex: 1;
+      min-width: 0;
+    }
+
     .comment-header {
       display: flex;
       justify-content: space-between;
+      align-items: baseline;
       margin-bottom: 6px;
+      gap: var(--spacer);
     }
 
     .comment-author {
       font-weight: 500;
       font-size: 13px;
-      color: var(--primary);
+      color: var(--text-color);
+      line-height: 1.4;
+    }
+
+    .comment-author .clickable-address {
+      font-weight: 400;
+      color: var(--text-color-quiet);
+      font-size: 12px;
     }
 
     .comment-time {
       font-size: 11px;
       color: var(--text-color-quiet);
+      white-space: nowrap;
     }
 
     .comment-text {
       font-size: 14px;
       line-height: 1.5;
       color: var(--text-color);
+      word-wrap: break-word;
     }
 
     .comment-form {
@@ -308,37 +340,36 @@
       color: var(--text-color-quiet);
     }
   </style>
+  <script src="/script/common.js"></script>
 </head>
 <body>
-  <header>
-    <nav class="container">
-      <a href="/" class="logo">
-        <span class="logo-text">💬 Message Board</span>
-      </a>
-      <ul class="nav-menu" id="nav-menu">
-        <li><a href="/?home">Home</a></li>
-      </ul>
-    </nav>
-  </header>
+<header>
+  <nav>
+    <a href="/?home" class="logo">
+      <img alt="logo" src="/image/epistery-logo-32.svg" class="logo-window">
+    </a>
+    <div class="nav-menu" id="nav-menu"></div>
+  </nav>
+</header>
 
   <main class="board-container">
     <div class="board-header">
-      <p class="board-subtitle">Community discussions and announcements</p>
-      <div id="user-status" class="user-status"></div>
     </div>
 
     <div id="error-container"></div>
 
-    <div class="new-post-form">
-      <textarea id="post-text" placeholder="Everything you post is yours, by law of math." rows="3"></textarea>
-      <div class="form-actions">
-        <label class="image-upload">
-          <input type="file" id="image-input" accept="image/*">
-          <span>📷 Add Image</span>
-        </label>
-        <button id="post-button" class="btn-post">Post</button>
+    <div id="create-post">
+      <div class="new-post-form">
+        <textarea id="post-text" placeholder="Everything you post is yours, by law of math." rows="3"></textarea>
+        <div class="form-actions">
+          <label class="image-upload">
+            <input type="file" id="image-input" accept="image/*">
+            <span>📷 Add Image</span>
+          </label>
+          <button id="post-button" class="btn-post">Post</button>
+        </div>
+        <img id="image-preview" class="image-preview" style="display: none;">
       </div>
-      <img id="image-preview" class="image-preview" style="display: none;">
     </div>
 
     <div id="posts-container"></div>
