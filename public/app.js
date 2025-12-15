@@ -400,12 +400,151 @@ function setupEventListeners() {
     const file = e.target.files[0];
     if (!file) return;
 
-    // Show preview
+    // Show loading state
+    imagePreview.style.display = 'block';
+    imagePreview.src = 'data:image/svg+xml;base64,' + btoa(`
+      <svg width="200" height="100" xmlns="http://www.w3.org/2000/svg">
+        <rect width="200" height="100" fill="#f0f0f0"/>
+        <text x="100" y="50" text-anchor="middle" font-family="Arial" font-size="14" fill="#666">
+          Processing image...
+        </text>
+      </svg>
+    `);
+
+    try {
+      // Validate and process image
+      const processedImage = await processImage(file);
+      imagePreview.src = processedImage;
+      imagePreview.style.display = 'block';
+    } catch (error) {
+      console.error('[message-board] Image processing error:', error);
+      showError(error.message);
+      imageInput.value = ''; // Clear the input
+      imagePreview.style.display = 'none';
+    }
+  });
+}
+
+// Process and normalize uploaded images
+async function processImage(file) {
+  // Fetch current image settings from server
+  let settings = {
+    maxUploadSize: 10,
+    maxProcessedSize: 3,
+    maxWidth: 1024,
+    jpegQuality: 85,
+    allowSvg: true
+  };
+
+  try {
+    const response = await fetch('/agent/epistery/message-board/api/settings/image');
+    if (response.ok) {
+      settings = await response.json();
+    }
+  } catch (error) {
+    console.warn('[message-board] Failed to fetch image settings, using defaults');
+  }
+
+  // 1. Validate file type
+  const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+  if (settings.allowSvg) {
+    validTypes.push('image/svg+xml');
+  }
+
+  if (!validTypes.includes(file.type)) {
+    throw new Error('Invalid file type. Please upload a JPEG, PNG, GIF, WebP' + (settings.allowSvg ? ', or SVG' : '') + ' image.');
+  }
+
+  // 2. Check file size
+  const maxSize = settings.maxUploadSize * 1024 * 1024;
+  if (file.size > maxSize) {
+    throw new Error(`File too large. Maximum size is ${settings.maxUploadSize}MB.`);
+  }
+
+  // 3. Handle SVG separately (no processing needed, just validate)
+  if (file.type === 'image/svg+xml') {
+    return await processSvgFile(file);
+  }
+
+  // 4. Load image
+  const img = await loadImage(file);
+
+  // 5. Resize if needed (use configured max width, maintain aspect ratio)
+  const maxWidth = settings.maxWidth;
+  let { width, height } = img;
+
+  if (width > maxWidth) {
+    const aspectRatio = height / width;
+    width = maxWidth;
+    height = Math.round(maxWidth * aspectRatio);
+  }
+
+  // 6. Draw to canvas (this strips EXIF data and normalizes format)
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+
+  // Use white background for transparency (in case of PNG/GIF with transparency)
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(0, 0, width, height);
+
+  // Draw image
+  ctx.drawImage(img, 0, 0, width, height);
+
+  // 7. Convert to JPEG with configured quality
+  const quality = settings.jpegQuality / 100;
+  const dataUrl = canvas.toDataURL('image/jpeg', quality);
+
+  // 8. Validate output size (if still too large, reduce quality)
+  const sizeInBytes = Math.round((dataUrl.length * 3) / 4);
+  const maxProcessedSize = settings.maxProcessedSize * 1024 * 1024;
+  if (sizeInBytes > maxProcessedSize) {
+    // Reduce quality by 15%
+    const reducedQuality = Math.max(0.5, quality - 0.15);
+    return canvas.toDataURL('image/jpeg', reducedQuality);
+  }
+
+  return dataUrl;
+}
+
+// Process SVG file
+async function processSvgFile(file) {
+  return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => {
-      imagePreview.src = e.target.result;
-      imagePreview.style.display = 'block';
+      try {
+        const svgContent = e.target.result;
+
+        // Basic client-side validation
+        if (!svgContent.trim().startsWith('<svg')) {
+          reject(new Error('Invalid SVG file'));
+          return;
+        }
+
+        // Convert to data URL
+        const base64 = btoa(svgContent);
+        resolve(`data:image/svg+xml;base64,${base64}`);
+      } catch (error) {
+        reject(new Error('Failed to process SVG file'));
+      }
     };
+    reader.onerror = () => reject(new Error('Failed to read SVG file'));
+    reader.readAsText(file);
+  });
+}
+
+// Helper: Load image from file
+function loadImage(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error('Failed to load image'));
+      img.src = e.target.result;
+    };
+    reader.onerror = () => reject(new Error('Failed to read file'));
     reader.readAsDataURL(file);
   });
 }

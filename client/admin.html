@@ -402,6 +402,16 @@
       </section>
     </div>
 
+    <!-- Sidebar Links Panel -->
+    <section class="console-panel full-width">
+      <div class="panel-header">
+        <h2>Sidebar Links</h2>
+        <button class="btn btn-primary" onclick="showAddLinkModal()">Add Link</button>
+      </div>
+
+      <div id="links-list"></div>
+    </section>
+
     <!-- Configuration Panel -->
     <section class="console-panel full-width">
       <div class="panel-header">
@@ -423,6 +433,71 @@
         <span class="config-value" id="min-notabot-points">-</span>
       </div>
     </section>
+
+    <!-- Image Upload Settings Panel -->
+    <section class="console-panel full-width">
+      <div class="panel-header">
+        <h2>Image Upload Settings</h2>
+      </div>
+
+      <div class="config-item">
+        <div>
+          <span class="config-label">Maximum Upload Size (MB)</span>
+          <p style="font-size: 0.75rem; color: var(--text-color-quiet); margin: 4px 0 0 0;">Maximum file size for image uploads before processing</p>
+        </div>
+        <div class="input-group">
+          <input type="number" id="max-upload-size" min="1" max="50" step="1" style="width: 100px;">
+          <button class="btn btn-primary" onclick="updateSetting('maxUploadSize')">Save</button>
+        </div>
+      </div>
+
+      <div class="config-item">
+        <div>
+          <span class="config-label">Maximum Processed Image Size (MB)</span>
+          <p style="font-size: 0.75rem; color: var(--text-color-quiet); margin: 4px 0 0 0;">Maximum size of processed/stored image data</p>
+        </div>
+        <div class="input-group">
+          <input type="number" id="max-processed-size" min="0.5" max="10" step="0.5" style="width: 100px;">
+          <button class="btn btn-primary" onclick="updateSetting('maxProcessedSize')">Save</button>
+        </div>
+      </div>
+
+      <div class="config-item">
+        <div>
+          <span class="config-label">Maximum Image Width (pixels)</span>
+          <p style="font-size: 0.75rem; color: var(--text-color-quiet); margin: 4px 0 0 0;">Images wider than this will be resized</p>
+        </div>
+        <div class="input-group">
+          <input type="number" id="max-width" min="256" max="4096" step="128" style="width: 100px;">
+          <button class="btn btn-primary" onclick="updateSetting('maxWidth')">Save</button>
+        </div>
+      </div>
+
+      <div class="config-item">
+        <div>
+          <span class="config-label">JPEG Quality</span>
+          <p style="font-size: 0.75rem; color: var(--text-color-quiet); margin: 4px 0 0 0;">Quality for processed JPEG images (0-100)</p>
+        </div>
+        <div class="input-group">
+          <input type="number" id="jpeg-quality" min="50" max="100" step="5" style="width: 100px;">
+          <button class="btn btn-primary" onclick="updateSetting('jpegQuality')">Save</button>
+        </div>
+      </div>
+
+      <div class="config-item">
+        <div>
+          <span class="config-label">Allow SVG Images</span>
+          <p style="font-size: 0.75rem; color: var(--text-color-quiet); margin: 4px 0 0 0;">Allow users to upload SVG images (sanitized for security)</p>
+        </div>
+        <div class="input-group">
+          <select id="allow-svg" style="width: 100px;">
+            <option value="true">Yes</option>
+            <option value="false">No</option>
+          </select>
+          <button class="btn btn-primary" onclick="updateSetting('allowSvg')">Save</button>
+        </div>
+      </div>
+    </section>
   </main>
 
   <footer>
@@ -432,6 +507,33 @@
       </div>
     </div>
   </footer>
+
+  <!-- Add Link Modal -->
+  <div id="add-link-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Add Link</h3>
+        <button class="close-btn" onclick="closeLinkModal()">&times;</button>
+      </div>
+
+      <form id="add-link-form" onsubmit="addLink(event)">
+        <div class="form-group">
+          <label for="link-title">Link Title</label>
+          <input type="text" id="link-title" placeholder="My Board" required>
+        </div>
+
+        <div class="form-group">
+          <label for="link-url">URL</label>
+          <input type="url" id="link-url" placeholder="https://example.com/board" required>
+        </div>
+
+        <div class="form-actions">
+          <button type="button" class="btn" onclick="closeLinkModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary">Add Link</button>
+        </div>
+      </form>
+    </div>
+  </div>
 
   <!-- Add Member Modal -->
   <div id="add-modal" class="modal">
@@ -472,6 +574,83 @@
   <script>
     let config = {};
 
+    // Load image settings
+    async function loadImageSettings() {
+      try {
+        const response = await fetch('/agent/epistery/message-board/api/settings/image', {
+          credentials: 'include'
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to load image settings');
+        }
+
+        const settings = await response.json();
+
+        // Update input fields
+        document.getElementById('max-upload-size').value = settings.maxUploadSize;
+        document.getElementById('max-processed-size').value = settings.maxProcessedSize;
+        document.getElementById('max-width').value = settings.maxWidth;
+        document.getElementById('jpeg-quality').value = settings.jpegQuality;
+        document.getElementById('allow-svg').value = settings.allowSvg.toString();
+      } catch (error) {
+        console.error('[admin] Failed to load image settings:', error);
+        showMessage('Failed to load image settings: ' + error.message, 'error');
+      }
+    }
+
+    // Update a specific setting
+    async function updateSetting(settingName) {
+      let value;
+      let fieldId;
+
+      switch(settingName) {
+        case 'maxUploadSize':
+          fieldId = 'max-upload-size';
+          value = parseFloat(document.getElementById(fieldId).value);
+          break;
+        case 'maxProcessedSize':
+          fieldId = 'max-processed-size';
+          value = parseFloat(document.getElementById(fieldId).value);
+          break;
+        case 'maxWidth':
+          fieldId = 'max-width';
+          value = parseInt(document.getElementById(fieldId).value);
+          break;
+        case 'jpegQuality':
+          fieldId = 'jpeg-quality';
+          value = parseInt(document.getElementById(fieldId).value);
+          break;
+        case 'allowSvg':
+          fieldId = 'allow-svg';
+          value = document.getElementById(fieldId).value === 'true';
+          break;
+        default:
+          showMessage('Unknown setting', 'error');
+          return;
+      }
+
+      try {
+        const response = await fetch('/agent/epistery/message-board/api/settings/image', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ [settingName]: value })
+        });
+
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error || 'Failed to update setting');
+        }
+
+        showMessage('Setting updated successfully', 'success');
+        await loadImageSettings(); // Reload to show updated values
+      } catch (error) {
+        console.error('[admin] Failed to update setting:', error);
+        showMessage('Failed to update setting: ' + error.message, 'error');
+      }
+    }
+
     // Load initial data
     async function loadData() {
       try {
@@ -487,6 +666,9 @@
         document.getElementById('posting-list-name').textContent = config.postingList;
         document.getElementById('min-notabot-points').textContent = config.minNotabotPoints;
         document.getElementById('min-points').textContent = config.minNotabotPoints;
+
+        // Load and display image settings
+        await loadImageSettings();
 
         // Load posts count
         const postsResponse = await fetch('/agent/epistery/message-board/api/posts', {
@@ -652,13 +834,102 @@
       }, 5000);
     }
 
+    // Sidebar Links Management
+    async function loadLinks() {
+      try {
+        const response = await fetch('/agent/epistery/message-board/links', { credentials: 'include' });
+        if (!response.ok) throw new Error('Failed to load links');
+
+        const links = await response.json();
+        const container = document.getElementById('links-list');
+
+        if (links && links.length > 0) {
+          container.innerHTML = links.map((link, index) => `
+            <div class="config-item">
+              <div>
+                <div style="font-weight: 500;">${escapeHtml(link.title)}</div>
+                <div style="font-size: 0.875em; color: var(--text-color-quiet);">${escapeHtml(link.url)}</div>
+              </div>
+              <button class="btn btn-danger" onclick="deleteLink(${index})">Delete</button>
+            </div>
+          `).join('');
+        } else {
+          container.innerHTML = '<div class="empty-state">No links configured</div>';
+        }
+      } catch (error) {
+        console.error('Failed to load links:', error);
+        showMessage('Failed to load links: ' + error.message, 'error');
+      }
+    }
+
+    function showAddLinkModal() {
+      document.getElementById('add-link-modal').classList.add('active');
+    }
+
+    function closeLinkModal() {
+      document.getElementById('add-link-modal').classList.remove('active');
+      document.getElementById('add-link-form').reset();
+    }
+
+    async function addLink(event) {
+      event.preventDefault();
+
+      const title = document.getElementById('link-title').value;
+      const url = document.getElementById('link-url').value;
+
+      try {
+        const response = await fetch('/agent/epistery/message-board/links', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ title, url })
+        });
+
+        if (!response.ok) throw new Error('Failed to add link');
+
+        showMessage('Link added successfully', 'success');
+        closeLinkModal();
+        await loadLinks();
+      } catch (error) {
+        console.error('Failed to add link:', error);
+        showMessage('Failed to add link: ' + error.message, 'error');
+      }
+    }
+
+    async function deleteLink(index) {
+      if (!confirm('Delete this link?')) return;
+
+      try {
+        const response = await fetch(`/agent/epistery/message-board/links/${index}`, {
+          method: 'DELETE',
+          credentials: 'include'
+        });
+
+        if (!response.ok) throw new Error('Failed to delete link');
+
+        showMessage('Link deleted', 'success');
+        await loadLinks();
+      } catch (error) {
+        console.error('Failed to delete link:', error);
+        showMessage('Failed to delete link: ' + error.message, 'error');
+      }
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
     // Initialize
     loadData();
+    loadLinks();
 
     // Close modal on ESC key
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
         closeModal();
+        closeLinkModal();
       }
     });
   </script>

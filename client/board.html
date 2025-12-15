@@ -11,10 +11,61 @@
     }
 
     .board-container {
-      width: 800px;
-      max-width: calc(100vw - 40px);
-      margin: 0 auto;
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    .board-main {
+      flex: 1;
+      overflow-y: auto;
       padding: var(--spacer3);
+      max-width: 800px;
+      margin: 0 auto;
+      width: 100%;
+    }
+
+    .board-sidebar {
+      width: 300px;
+      flex-shrink: 0;
+      background: var(--bg-color-quiet-d);
+      border-left: 1px solid var(--page-border);
+      overflow-y: auto;
+      padding: var(--spacer2);
+    }
+
+    .sidebar-title {
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: var(--text-color-quiet);
+      margin-bottom: var(--spacer);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .sidebar-links {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+    }
+
+    .sidebar-link {
+      margin-bottom: var(--spacerhalf);
+    }
+
+    .sidebar-link a {
+      display: block;
+      padding: var(--spacerhalf) var(--spacer);
+      color: var(--text-color);
+      text-decoration: none;
+      border-radius: 4px;
+      font-size: 0.9em;
+      transition: all 0.2s;
+    }
+
+    .sidebar-link a:hover {
+      background: var(--bg-color-d);
+      color: var(--rust-mid);
     }
 
     .board-header {
@@ -353,17 +404,18 @@
 </header>
 
   <main class="board-container">
-    <div class="board-header">
-    </div>
+    <div class="board-main">
+      <div class="board-header">
+      </div>
 
-    <div id="error-container"></div>
+      <div id="error-container"></div>
 
     <div id="create-post">
       <div class="new-post-form">
         <textarea id="post-text" placeholder="Everything you post is yours, by law of math." rows="3"></textarea>
         <div class="form-actions">
           <label class="image-upload">
-            <input type="file" id="image-input" accept="image/*">
+            <input type="file" id="image-input" accept="image/jpeg,image/jpg,image/png,image/gif,image/webp,image/svg+xml">
             <span>📷 Add Image</span>
           </label>
           <button id="post-button" class="btn-post">Post</button>
@@ -373,6 +425,14 @@
     </div>
 
     <div id="posts-container"></div>
+    </div>
+
+    <div class="board-sidebar">
+      <div class="sidebar-title">Links</div>
+      <ul class="sidebar-links" id="sidebar-links">
+        <!-- Links will be loaded here -->
+      </ul>
+    </div>
   </main>
 
   <footer>
@@ -384,5 +444,40 @@
   </footer>
 
   <script src="/agent/epistery/message-board/static/app.js"></script>
+  <script>
+    // Load sidebar links
+    async function loadSidebarLinks() {
+      try {
+        const response = await fetch('/agent/epistery/message-board/links');
+        if (response.ok) {
+          const links = await response.json();
+          const linksContainer = document.getElementById('sidebar-links');
+
+          if (links && links.length > 0) {
+            linksContainer.innerHTML = links.map(link => `
+              <li class="sidebar-link">
+                <a href="${escapeHtml(link.url)}" target="_blank" rel="noopener">
+                  ${escapeHtml(link.title)}
+                </a>
+              </li>
+            `).join('');
+          } else {
+            linksContainer.innerHTML = '<li style="padding: var(--spacer); color: var(--text-color-quiet); font-size: 0.875em;">No links yet</li>';
+          }
+        }
+      } catch (error) {
+        console.error('[board] Failed to load sidebar links:', error);
+      }
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // Load links on page load
+    loadSidebarLinks();
+  </script>
 </body>
 </html>

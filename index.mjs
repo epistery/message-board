@@ -28,6 +28,15 @@ export default class MessageBoardAgent {
     this.postingList = config.postingList || 'message-board::posting';
     this.moderatorList = config.moderatorList || 'message-board::moderators';
 
+    // Image upload settings (configurable via admin panel)
+    this.imageSettings = {
+      maxUploadSize: config.imageSettings?.maxUploadSize || 10, // MB
+      maxProcessedSize: config.imageSettings?.maxProcessedSize || 3, // MB
+      maxWidth: config.imageSettings?.maxWidth || 1024, // pixels
+      jpegQuality: config.imageSettings?.jpegQuality || 85, // 0-100
+      allowSvg: config.imageSettings?.allowSvg !== undefined ? config.imageSettings.allowSvg : true
+    };
+
     // IPFS & batching configuration
     this.batchThreshold = config.batchThreshold || 5; // Posts before on-chain flush
     this.ipfsUrl = null; // Will be set when epistery instance is available
@@ -42,6 +51,12 @@ export default class MessageBoardAgent {
 
     // Per-domain state (keyed by domain)
     this.domainStates = new Map();
+
+    // Sidebar links
+    this.sidebarLinks = [];
+    this.loadSidebarLinks().catch(err => {
+      console.log('[message-board] No existing sidebar links, starting fresh');
+    });
   }
 
   /**
@@ -175,6 +190,114 @@ export default class MessageBoardAgent {
       });
     });
 
+    // Get sidebar links
+    router.get('/links', (req, res) => {
+      res.json(this.sidebarLinks || []);
+    });
+
+    // Add sidebar link (requires moderator permission)
+    router.post('/links', async (req, res) => {
+      try {
+        const permission = await this.checkModeratorPermission(req);
+        if (!permission.allowed) {
+          return res.status(403).json({ error: 'Only moderators can manage links' });
+        }
+
+        const { title, url } = req.body;
+        if (!title || !url) {
+          return res.status(400).json({ error: 'Title and URL are required' });
+        }
+
+        if (!this.sidebarLinks) {
+          this.sidebarLinks = [];
+        }
+
+        this.sidebarLinks.push({ title, url });
+        await this.saveSidebarLinks();
+
+        res.json({ success: true, links: this.sidebarLinks });
+      } catch (error) {
+        console.error('[message-board] Error adding link:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Delete sidebar link (requires moderator permission)
+    router.delete('/links/:index', async (req, res) => {
+      try {
+        const permission = await this.checkModeratorPermission(req);
+        if (!permission.allowed) {
+          return res.status(403).json({ error: 'Only moderators can manage links' });
+        }
+
+        const index = parseInt(req.params.index);
+        if (!this.sidebarLinks || index < 0 || index >= this.sidebarLinks.length) {
+          return res.status(404).json({ error: 'Link not found' });
+        }
+
+        this.sidebarLinks.splice(index, 1);
+        await this.saveSidebarLinks();
+
+        res.json({ success: true, links: this.sidebarLinks });
+      } catch (error) {
+        console.error('[message-board] Error deleting link:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Get image settings
+    router.get('/api/settings/image', (req, res) => {
+      res.json(this.imageSettings);
+    });
+
+    // Update image settings (requires moderator permission)
+    router.patch('/api/settings/image', async (req, res) => {
+      try {
+        // Check moderator permission
+        const permission = await this.checkModeratorPermission(req);
+        if (!permission.allowed) {
+          return res.status(403).json({ error: 'Only moderators can update settings' });
+        }
+
+        const updates = req.body;
+        const validFields = ['maxUploadSize', 'maxProcessedSize', 'maxWidth', 'jpegQuality', 'allowSvg'];
+
+        // Validate and apply updates
+        for (const [key, value] of Object.entries(updates)) {
+          if (!validFields.includes(key)) {
+            return res.status(400).json({ error: `Invalid setting: ${key}` });
+          }
+
+          // Validate ranges
+          if (key === 'maxUploadSize' && (value < 1 || value > 50)) {
+            return res.status(400).json({ error: 'maxUploadSize must be between 1 and 50 MB' });
+          }
+          if (key === 'maxProcessedSize' && (value < 0.5 || value > 10)) {
+            return res.status(400).json({ error: 'maxProcessedSize must be between 0.5 and 10 MB' });
+          }
+          if (key === 'maxWidth' && (value < 256 || value > 4096)) {
+            return res.status(400).json({ error: 'maxWidth must be between 256 and 4096 pixels' });
+          }
+          if (key === 'jpegQuality' && (value < 50 || value > 100)) {
+            return res.status(400).json({ error: 'jpegQuality must be between 50 and 100' });
+          }
+          if (key === 'allowSvg' && typeof value !== 'boolean') {
+            return res.status(400).json({ error: 'allowSvg must be a boolean' });
+          }
+
+          this.imageSettings[key] = value;
+        }
+
+        // Save settings to config
+        this.saveImageSettings();
+
+        res.json({ success: true, settings: this.imageSettings });
+      } catch (error) {
+        console.error('[message-board] Update settings error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
     // Get all posts (public, read-only)
     router.get('/api/posts', (req, res) => {
       try {
@@ -195,6 +318,48 @@ export default class MessageBoardAgent {
         //TODO: Text is not required if an image is attached
         if (!text || text.trim().length === 0) {
           return res.status(400).json({ error: 'Text is required' });
+        }
+
+        // Validate image if provided
+        if (image) {
+          // Check if it's a data URL
+          if (!image.startsWith('data:image/')) {
+            return res.status(400).json({ error: 'Invalid image format' });
+          }
+
+          // Check size using configured limit
+          const sizeInBytes = Math.round((image.length * 3) / 4);
+          const maxSize = this.imageSettings.maxProcessedSize * 1024 * 1024;
+          if (sizeInBytes > maxSize) {
+            return res.status(400).json({
+              error: `Image too large. Maximum size is ${this.imageSettings.maxProcessedSize}MB.`
+            });
+          }
+
+          // Validate image type
+          const isJpeg = image.startsWith('data:image/jpeg');
+          const isSvg = image.startsWith('data:image/svg+xml');
+
+          if (!isJpeg && !isSvg) {
+            return res.status(400).json({ error: 'Only JPEG and SVG images are allowed' });
+          }
+
+          // Check if SVG is allowed
+          if (isSvg && !this.imageSettings.allowSvg) {
+            return res.status(400).json({ error: 'SVG images are not allowed on this board' });
+          }
+
+          // Sanitize SVG if provided
+          if (isSvg) {
+            try {
+              const sanitizedSvg = this.sanitizeSvg(image);
+              // Replace original with sanitized version
+              req.body.image = sanitizedSvg;
+            } catch (error) {
+              console.error('[message-board] SVG sanitization error:', error);
+              return res.status(400).json({ error: 'Invalid or malicious SVG content' });
+            }
+          }
         }
 
         // Check posting permission
@@ -315,19 +480,34 @@ export default class MessageBoardAgent {
       try {
         const postId = parseInt(req.params.id);
 
-        // Check if user is a moderator
-        const isModerator = await this.checkModeratorPermission(req);
-        if (!isModerator) {
-          return res.status(403).json({ error: 'Moderator access required' });
+        // Get authenticated user
+        const sameDomainAuth = await this.verifySameDomainAuth(req);
+        if (!sameDomainAuth.valid) {
+          return res.status(401).json({ error: 'Authentication required' });
         }
 
+        const userAddress = sameDomainAuth.address;
         const data = this.readData(req.domain);
-        const index = data.posts.findIndex(p => p.id === postId);
+        const post = data.posts.find(p => p.id === postId);
 
-        if (index === -1) {
+        if (!post) {
           return res.status(404).json({ error: 'Post not found' });
         }
 
+        // Check if user can delete this post
+        // Allow: post author OR epistery::admin OR {domain}::admin OR message-board::moderators
+        const isAuthor = post.author === userAddress;
+        const modPermission = await this.checkModeratorPermission(req);
+        const canDelete = isAuthor || modPermission.allowed;
+
+        if (!canDelete) {
+          return res.status(403).json({
+            error: 'You can only delete your own posts unless you are a moderator'
+          });
+        }
+
+        // Delete the post
+        const index = data.posts.findIndex(p => p.id === postId);
         data.posts.splice(index, 1);
         this.writeData(req.domain, data);
 
@@ -444,6 +624,135 @@ export default class MessageBoardAgent {
       user: { address, name: verification.name },
       method: 'authenticated'
     };
+  }
+
+  /**
+   * Check if user has moderator permission
+   */
+  async checkModeratorPermission(req) {
+    const sameDomainAuth = await this.verifySameDomainAuth(req);
+
+    if (!sameDomainAuth.valid) {
+      return { allowed: false, reason: 'Authentication required' };
+    }
+
+    const address = sameDomainAuth.address;
+
+    if (this.epistery) {
+      try {
+        // Check global admin
+        const isGlobalAdmin = await this.epistery.isListed(address, 'epistery::admin');
+        if (isGlobalAdmin) {
+          return { allowed: true, user: { address }, method: 'global-admin' };
+        }
+
+        // Check domain admin
+        const domainAdminList = `${sameDomainAuth.domain}::admin`;
+        const isDomainAdmin = await this.epistery.isListed(address, domainAdminList);
+        if (isDomainAdmin) {
+          return { allowed: true, user: { address }, method: 'domain-admin' };
+        }
+
+        // Check moderator list
+        const isModerator = await this.epistery.isListed(address, this.moderatorList);
+        if (isModerator) {
+          return { allowed: true, user: { address }, method: 'moderator' };
+        }
+      } catch (error) {
+        console.error('[message-board] Moderator permission check failed:', error);
+      }
+    }
+
+    return { allowed: false, reason: 'Moderator permission required' };
+  }
+
+  /**
+   * Save image settings to config file
+   */
+  saveImageSettings() {
+    const configPath = path.join(__dirname, 'config.json');
+    let config = {};
+
+    // Load existing config
+    if (existsSync(configPath)) {
+      try {
+        config = JSON.parse(readFileSync(configPath, 'utf8'));
+      } catch (error) {
+        console.error('[message-board] Failed to read config:', error);
+      }
+    }
+
+    // Update image settings
+    config.imageSettings = this.imageSettings;
+
+    // Save config
+    try {
+      writeFileSync(configPath, JSON.stringify(config, null, 2));
+      console.log('[message-board] Image settings saved');
+    } catch (error) {
+      console.error('[message-board] Failed to save config:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Sanitize SVG content to remove potentially malicious code
+   * This is a simple sanitization - for production, consider using a library like DOMPurify
+   */
+  sanitizeSvg(dataUrl) {
+    // Extract SVG content from data URL
+    const base64Match = dataUrl.match(/^data:image\/svg\+xml;base64,(.+)$/);
+    let svgContent;
+
+    if (base64Match) {
+      svgContent = Buffer.from(base64Match[1], 'base64').toString('utf8');
+    } else {
+      // Try URL encoded
+      const urlMatch = dataUrl.match(/^data:image\/svg\+xml,(.*?)$/);
+      if (urlMatch) {
+        svgContent = decodeURIComponent(urlMatch[1]);
+      } else {
+        throw new Error('Invalid SVG data URL format');
+      }
+    }
+
+    // Remove dangerous elements and attributes
+    const dangerous = {
+      tags: ['script', 'iframe', 'object', 'embed', 'link', 'style', 'meta', 'base'],
+      attributes: ['onload', 'onerror', 'onclick', 'onmouseover', 'onmouseout', 'onmousemove',
+                   'onmouseenter', 'onmouseleave', 'onfocus', 'onblur', 'onchange', 'oninput',
+                   'onsubmit', 'onkeydown', 'onkeyup', 'onkeypress', 'xmlns:xlink'],
+      protocols: ['javascript:', 'data:text/html', 'vbscript:']
+    };
+
+    // Remove dangerous tags
+    for (const tag of dangerous.tags) {
+      svgContent = svgContent.replace(new RegExp(`<${tag}[^>]*>.*?</${tag}>`, 'gis'), '');
+      svgContent = svgContent.replace(new RegExp(`<${tag}[^>]*/>`, 'gi'), '');
+    }
+
+    // Remove dangerous attributes
+    for (const attr of dangerous.attributes) {
+      svgContent = svgContent.replace(new RegExp(`\\s${attr}\\s*=\\s*["'][^"']*["']`, 'gi'), '');
+      svgContent = svgContent.replace(new RegExp(`\\s${attr}\\s*=\\s*[^\\s>]*`, 'gi'), '');
+    }
+
+    // Remove dangerous protocols from href and xlink:href
+    for (const protocol of dangerous.protocols) {
+      svgContent = svgContent.replace(new RegExp(`(href|xlink:href)\\s*=\\s*["']${protocol}[^"']*["']`, 'gi'), '');
+    }
+
+    // Ensure it starts with <svg and ends with </svg>
+    if (!svgContent.trim().match(/^<svg[\s>]/i)) {
+      throw new Error('SVG must start with <svg> tag');
+    }
+    if (!svgContent.trim().match(/<\/svg>\s*$/i)) {
+      throw new Error('SVG must end with </svg> tag');
+    }
+
+    // Re-encode as data URL
+    const sanitizedBase64 = Buffer.from(svgContent).toString('base64');
+    return `data:image/svg+xml;base64,${sanitizedBase64}`;
   }
 
   /**
@@ -840,5 +1149,36 @@ export default class MessageBoardAgent {
       this.wss.close();
     }
     console.log('[message-board] Agent cleanup');
+  }
+
+  /**
+   * Load sidebar links from Config storage
+   */
+  async loadSidebarLinks() {
+    try {
+      const { Config } = await import('epistery');
+      const config = new Config();
+      const linksData = config.readFile('sidebar-links.json').toString();
+      this.sidebarLinks = JSON.parse(linksData);
+      console.log(`[message-board] Loaded ${this.sidebarLinks.length} sidebar links`);
+    } catch (error) {
+      // No links file yet
+      this.sidebarLinks = [];
+    }
+  }
+
+  /**
+   * Save sidebar links to Config storage
+   */
+  async saveSidebarLinks() {
+    try {
+      const { Config } = await import('epistery');
+      const config = new Config();
+      config.writeFile('sidebar-links.json', JSON.stringify(this.sidebarLinks, null, 2));
+      console.log(`[message-board] Saved ${this.sidebarLinks.length} sidebar links`);
+    } catch (error) {
+      console.error('[message-board] Failed to save sidebar links:', error);
+      throw error;
+    }
   }
 }
