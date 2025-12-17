@@ -3,7 +3,10 @@ import { WebSocketServer } from 'ws';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { Config } from 'epistery';
 import crypto from 'crypto';
+import https from "https";
+import http from "http";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -18,84 +21,57 @@ const __dirname = path.dirname(__filename);
  * This is the main entry point loaded by AgentManager.
  */
 export default class MessageBoardAgent {
-  constructor(config = {}) {
-    this.config = config;
+  constructor(manifestConfig = {}) {
+    this.manifestConfig = manifestConfig;
+    this.rootConfig = (new Config()).read('/');
     this.epistery = null;
     this.wss = null;
-
-    // Default configuration
-    this.minNotabotPoints = config.minNotabotPoints || 10;
-    this.postingList = config.postingList || 'message-board::posting';
-    this.moderatorList = config.moderatorList || 'message-board::moderators';
-
-    // Image upload settings (configurable via admin panel)
-    this.imageSettings = {
-      maxUploadSize: config.imageSettings?.maxUploadSize || 10, // MB
-      maxProcessedSize: config.imageSettings?.maxProcessedSize || 3, // MB
-      maxWidth: config.imageSettings?.maxWidth || 1024, // pixels
-      jpegQuality: config.imageSettings?.jpegQuality || 85, // 0-100
-      allowSvg: config.imageSettings?.allowSvg !== undefined ? config.imageSettings.allowSvg : true
-    };
-
-    // IPFS & batching configuration
-    this.batchThreshold = config.batchThreshold || 5; // Posts before on-chain flush
-    this.ipfsUrl = null; // Will be set when epistery instance is available
-    this.ipfsGateway = null;
 
     // Batch chain for posts (Proof of Stake - server earns right to batch)
     this.postChain = [];
     this.lastHash = '0000000000000000000000000000000000000000000000000000000000000000';
 
-    // Data storage - domain-specific paths set per-request
-    this.dataDir = path.join(__dirname, 'data');
-
     // Per-domain state (keyed by domain)
     this.domainStates = new Map();
 
-    // Sidebar links
-    this.sidebarLinks = [];
-    this.loadSidebarLinks().catch(err => {
-      console.log('[message-board] No existing sidebar links, starting fresh');
-    });
   }
 
-  /**
-   * Get domain-specific file paths and initialize if needed
-   */
-  getDomainFiles(domain) {
-    const domainDir = path.join(this.dataDir, domain);
-    const postsFile = path.join(domainDir, 'posts.json');
-    const batchFile = path.join(domainDir, 'batch.json');
+  getDomainConfig(domain) {
+    const config = new Config();
+    config.setPath(domain);
 
-    // Ensure domain directory exists
-    if (!existsSync(domainDir)) {
-      mkdirSync(domainDir, { recursive: true });
+    if (!config.data.messageBoard) {
+      config.data.messageBoard = {
+        minNotabotPoints: this.manifestConfig.minNotabotPoints || 10,
+        postingList: this.manifestConfig.postingList || 'message-board::posting',
+        moderatorList: this.manifestConfig.moderatorList || 'message-board::moderators',
+        batchThreshold: this.manifestConfig.batchThreshold || 5, // Posts before on-chain flush
+        imageSettings: {
+          maxUploadSize: this.manifestConfig.imageSettings?.maxUploadSize || 10, // MB
+          maxProcessedSize: this.manifestConfig.imageSettings?.maxProcessedSize || 3, // MB
+          maxWidth: this.manifestConfig.imageSettings?.maxWidth || 1024, // pixels
+          jpegQuality: this.manifestConfig.imageSettings?.jpegQuality || 85, // 0-100
+          allowSvg: this.manifestConfig.imageSettings?.allowSvg !== undefined ? this.manifestConfig.imageSettings.allowSvg : true
+        }
+      }
+      config.save();
     }
-
-    // Initialize posts file
-    if (!existsSync(postsFile)) {
-      writeFileSync(postsFile, JSON.stringify({ posts: [], nextId: 1 }));
-    }
-
-    // Initialize batch file
-    if (!existsSync(batchFile)) {
-      writeFileSync(batchFile, JSON.stringify({
-        chain: [],
-        lastHash: this.lastHash,
-        lastFlush: Date.now()
-      }));
-    }
-
-    return { postsFile, batchFile, domainDir };
+    return config;
   }
-
   /**
    * Get or initialize domain state
    */
   getDomainState(domain) {
     if (!this.domainStates.has(domain)) {
-      const { batchFile } = this.getDomainFiles(domain);
-      const batchData = JSON.parse(readFileSync(batchFile, 'utf8'));
+      const config = new Config();
+      config.setPath(domain);
+
+      const batchData = config.readFile('message-board-batch.json') || {
+        chain: [],
+        lastHash: this.lastHash,
+        lastFlush: Date.now()
+      };
+
       this.domainStates.set(domain, {
         postChain: batchData.chain || [],
         lastHash: batchData.lastHash || this.lastHash
@@ -111,21 +87,9 @@ export default class MessageBoardAgent {
    * @param {express.Router} router - Express router instance
    */
   attach(router) {
-    // Store epistery instance and domain from app.locals
     router.use((req, res, next) => {
-      if (!this.epistery && req.app.locals.epistery) {
-        this.epistery = req.app.locals.epistery;
-
-        // Initialize IPFS configuration from epistery-host
-        if (!this.ipfsUrl) {
-          this.ipfsUrl = process.env.IPFS_URL || 'https://rootz.digital/api/v0';
-          this.ipfsGateway = process.env.IPFS_GATEWAY || 'https://rootz.digital';
-          console.log('[message-board] IPFS configured:', this.ipfsUrl);
-        }
-      }
-
-      // Store domain in request for domain-specific data access
       req.domain = req.hostname || 'localhost';
+      req.boardConfig = this.getDomainConfig(req.domain);
       next();
     });
 
@@ -178,21 +142,23 @@ export default class MessageBoardAgent {
 
     // Health check
     router.get('/api/health', (req, res) => {
+      const boardConfig = req.boardConfig.data.messageBoard;
       res.json({
         status: 'ok',
         agent: 'message-board',
         version: '1.0.0',
         config: {
-          minNotabotPoints: this.minNotabotPoints,
-          postingList: this.postingList,
-          moderatorList: this.moderatorList
+          minNotabotPoints: boardConfig.minNotabotPoints,
+          postingList: boardConfig.postingList,
+          moderatorList: boardConfig.moderatorList
         }
       });
     });
 
     // Get sidebar links
     router.get('/links', (req, res) => {
-      res.json(this.sidebarLinks || []);
+      const links = this.loadSidebarLinks(req.domain);
+      res.json(links);
     });
 
     // Add sidebar link (requires moderator permission)
@@ -208,14 +174,11 @@ export default class MessageBoardAgent {
           return res.status(400).json({ error: 'Title and URL are required' });
         }
 
-        if (!this.sidebarLinks) {
-          this.sidebarLinks = [];
-        }
+        const links = this.loadSidebarLinks(req.domain);
+        links.push({ title, url });
+        this.saveSidebarLinks(req.domain, links);
 
-        this.sidebarLinks.push({ title, url });
-        await this.saveSidebarLinks();
-
-        res.json({ success: true, links: this.sidebarLinks });
+        res.json({ success: true, links });
       } catch (error) {
         console.error('[message-board] Error adding link:', error);
         res.status(500).json({ error: error.message });
@@ -231,14 +194,16 @@ export default class MessageBoardAgent {
         }
 
         const index = parseInt(req.params.index);
-        if (!this.sidebarLinks || index < 0 || index >= this.sidebarLinks.length) {
+        const links = this.loadSidebarLinks(req.domain);
+
+        if (index < 0 || index >= links.length) {
           return res.status(404).json({ error: 'Link not found' });
         }
 
-        this.sidebarLinks.splice(index, 1);
-        await this.saveSidebarLinks();
+        links.splice(index, 1);
+        this.saveSidebarLinks(req.domain, links);
 
-        res.json({ success: true, links: this.sidebarLinks });
+        res.json({ success: true, links });
       } catch (error) {
         console.error('[message-board] Error deleting link:', error);
         res.status(500).json({ error: error.message });
@@ -247,7 +212,8 @@ export default class MessageBoardAgent {
 
     // Get image settings
     router.get('/api/settings/image', (req, res) => {
-      res.json(this.imageSettings);
+      const imageSettings = req.boardConfig.data.messageBoard.imageSettings;
+      res.json(imageSettings);
     });
 
     // Update image settings (requires moderator permission)
@@ -261,6 +227,7 @@ export default class MessageBoardAgent {
 
         const updates = req.body;
         const validFields = ['maxUploadSize', 'maxProcessedSize', 'maxWidth', 'jpegQuality', 'allowSvg'];
+        const imageSettings = req.boardConfig.data.messageBoard.imageSettings;
 
         // Validate and apply updates
         for (const [key, value] of Object.entries(updates)) {
@@ -285,13 +252,13 @@ export default class MessageBoardAgent {
             return res.status(400).json({ error: 'allowSvg must be a boolean' });
           }
 
-          this.imageSettings[key] = value;
+          imageSettings[key] = value;
         }
 
         // Save settings to config
-        this.saveImageSettings();
+        req.boardConfig.save();
 
-        res.json({ success: true, settings: this.imageSettings });
+        res.json({ success: true, settings: imageSettings });
       } catch (error) {
         console.error('[message-board] Update settings error:', error);
         res.status(500).json({ error: error.message });
@@ -322,6 +289,8 @@ export default class MessageBoardAgent {
 
         // Validate image if provided
         if (image) {
+          const imageSettings = req.boardConfig.data.messageBoard.imageSettings;
+
           // Check if it's a data URL
           if (!image.startsWith('data:image/')) {
             return res.status(400).json({ error: 'Invalid image format' });
@@ -329,10 +298,10 @@ export default class MessageBoardAgent {
 
           // Check size using configured limit
           const sizeInBytes = Math.round((image.length * 3) / 4);
-          const maxSize = this.imageSettings.maxProcessedSize * 1024 * 1024;
+          const maxSize = imageSettings.maxProcessedSize * 1024 * 1024;
           if (sizeInBytes > maxSize) {
             return res.status(400).json({
-              error: `Image too large. Maximum size is ${this.imageSettings.maxProcessedSize}MB.`
+              error: `Image too large. Maximum size is ${imageSettings.maxProcessedSize}MB.`
             });
           }
 
@@ -345,7 +314,7 @@ export default class MessageBoardAgent {
           }
 
           // Check if SVG is allowed
-          if (isSvg && !this.imageSettings.allowSvg) {
+          if (isSvg && !imageSettings.allowSvg) {
             return res.status(400).json({ error: 'SVG images are not allowed on this board' });
           }
 
@@ -368,9 +337,10 @@ export default class MessageBoardAgent {
         console.log('[message-board] Permission result:', permission);
 
         if (!permission.allowed) {
+          const boardConfig = req.boardConfig.data.messageBoard;
           return res.status(403).json({
             error: permission.reason,
-            requiresNotabotPoints: this.minNotabotPoints
+            requiresNotabotPoints: boardConfig.minNotabotPoints
           });
         }
 
@@ -443,9 +413,10 @@ export default class MessageBoardAgent {
         // Check posting permission
         const permission = await this.checkPostingPermission(req);
         if (!permission.allowed) {
+          const boardConfig = req.boardConfig.data.messageBoard;
           return res.status(403).json({
             error: permission.reason,
-            requiresNotabotPoints: this.minNotabotPoints
+            requiresNotabotPoints: boardConfig.minNotabotPoints
           });
         }
 
@@ -518,15 +489,115 @@ export default class MessageBoardAgent {
         res.status(500).json({ error: error.message });
       }
     });
+    // API endpoint to get links
+    router.get('/api/links', async (req, res) => {
+      try {
+        const domain = req.headers.host?.split(':')[0] || 'localhost';
+        const cfg = new Config();
+        cfg.setPath(domain);
+
+        const links = cfg.data?.links || [];
+        res.json({ links });
+      } catch (error) {
+        console.error('[get-links] Error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // API endpoint to save/update links (requires admin auth)
+    router.post('/api/links', async (req, res) => {
+      try {
+        const { slug, url, title } = req.body;
+        const domain = req.headers.host?.split(':')[0] || 'localhost';
+
+        if (!slug || !url) {
+          return res.status(400).json({ error: 'slug and url are required' });
+        }
+
+        // Check if user is admin
+        if (!req.episteryClient || !req.app.locals.epistery) {
+          return res.status(401).json({ error: 'Not authenticated' });
+        }
+
+        const isAdmin = await req.app.locals.epistery.isListed(req.episteryClient.address, 'epistery::admin');
+        if (!isAdmin) {
+          return res.status(403).json({ error: 'Not authorized' });
+        }
+
+        const cfg = new Config();
+        cfg.setPath(domain);
+
+        if (!cfg.data.links) {
+          cfg.data.links = [];
+        }
+
+        // Check if link exists and update, or add new
+        const existingIndex = cfg.data.links.findIndex(l => l.slug === slug);
+        const link = { slug, url, title: title || slug };
+
+        if (existingIndex >= 0) {
+          cfg.data.links[existingIndex] = link;
+        } else {
+          cfg.data.links.push(link);
+        }
+
+        cfg.save();
+
+        res.json({ success: true, link });
+      } catch (error) {
+        console.error('[save-link] Error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // API endpoint to delete link (requires admin auth)
+    router.delete('/api/links/:slug', async (req, res) => {
+      try {
+        const { slug } = req.params;
+        const domain = req.headers.host?.split(':')[0] || 'localhost';
+
+        // Check if user is admin
+        if (!req.episteryClient || !req.app.locals.epistery) {
+          return res.status(401).json({ error: 'Not authenticated' });
+        }
+
+        const isAdmin = await req.app.locals.epistery.isListed(req.episteryClient.address, 'epistery::admin');
+        if (!isAdmin) {
+          return res.status(403).json({ error: 'Not authorized' });
+        }
+
+        const cfg = new Config();
+        cfg.setPath(domain);
+
+        if (!cfg.data.links) {
+          return res.status(404).json({ error: 'Link not found' });
+        }
+
+        const initialLength = cfg.data.links.length;
+        cfg.data.links = cfg.data.links.filter(l => l.slug !== slug);
+
+        if (cfg.data.links.length === initialLength) {
+          return res.status(404).json({ error: 'Link not found' });
+        }
+
+        cfg.save();
+
+        res.json({ success: true });
+      } catch (error) {
+        console.error('[delete-link] Error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
 
     // Status endpoint
     router.get('/status', (req, res) => {
       const data = this.readData(req.domain);
+      const boardConfig = req.boardConfig.data.messageBoard;
       res.json({
         agent: 'message-board',
         version: '1.0.0',
         postCount: data.posts.length,
-        config: this.config
+        config: boardConfig
       });
     });
 
@@ -589,12 +660,13 @@ export default class MessageBoardAgent {
         }
 
         // 3. Check if on posting whitelist
-        console.log(`[message-board] Checking posting whitelist for ${address} on list ${this.postingList}`);
-        const isOnPostingList = await this.epistery.isListed(address, this.postingList);
+        const boardConfig = req.boardConfig.data.messageBoard;
+        console.log(`[message-board] Checking posting whitelist for ${address} on list ${boardConfig.postingList}`);
+        const isOnPostingList = await this.epistery.isListed(address, boardConfig.postingList);
         console.log(`[message-board] Posting whitelist check result:`, isOnPostingList);
 
         if (isOnPostingList) {
-          const userName = await this.getUserName(req, address, this.postingList);
+          const userName = await this.getUserName(req, address, boardConfig.postingList);
           console.log(`[message-board] User ${address} allowed via posting whitelist (name: ${userName})`);
           return {
             allowed: true,
@@ -654,7 +726,8 @@ export default class MessageBoardAgent {
         }
 
         // Check moderator list
-        const isModerator = await this.epistery.isListed(address, this.moderatorList);
+        const boardConfig = req.boardConfig.data.messageBoard;
+        const isModerator = await this.epistery.isListed(address, boardConfig.moderatorList);
         if (isModerator) {
           return { allowed: true, user: { address }, method: 'moderator' };
         }
@@ -664,35 +737,6 @@ export default class MessageBoardAgent {
     }
 
     return { allowed: false, reason: 'Moderator permission required' };
-  }
-
-  /**
-   * Save image settings to config file
-   */
-  saveImageSettings() {
-    const configPath = path.join(__dirname, 'config.json');
-    let config = {};
-
-    // Load existing config
-    if (existsSync(configPath)) {
-      try {
-        config = JSON.parse(readFileSync(configPath, 'utf8'));
-      } catch (error) {
-        console.error('[message-board] Failed to read config:', error);
-      }
-    }
-
-    // Update image settings
-    config.imageSettings = this.imageSettings;
-
-    // Save config
-    try {
-      writeFileSync(configPath, JSON.stringify(config, null, 2));
-      console.log('[message-board] Image settings saved');
-    } catch (error) {
-      console.error('[message-board] Failed to save config:', error);
-      throw error;
-    }
   }
 
   /**
@@ -792,32 +836,6 @@ export default class MessageBoardAgent {
   }
 
   /**
-   * Check if user is a moderator
-   */
-  async checkModeratorPermission(req) {
-    const verification = await this.verifyDelegationToken(req);
-
-    if (!verification.valid) {
-      return false;
-    }
-
-    if (!this.epistery) {
-      return false;
-    }
-
-    try {
-      const isModerator = await this.epistery.isListed(verification.rivetAddress, this.moderatorList);
-      return isModerator;
-    } catch (error) {
-      console.error('[message-board] Moderator check failed:', error);
-      return false;
-    }
-  }
-
-  /**
-   * Verify delegation token from request
-   */
-  /**
    * Verify same-domain authentication (user's wallet address from header)
    * For same-domain scenarios, we trust the address if user is domain admin
    */
@@ -836,16 +854,16 @@ export default class MessageBoardAgent {
       // Verify this address is on domain admin white-list
       // Format: {resource}::{role} where resource is domain name, role is access level
       if (this.epistery) {
-        const isDomainAdmin = await this.isListedCaseInsensitive(address, `${req.domain}::admin`);
-        if (isDomainAdmin) {
-          console.log('[message-board] Same-domain auth successful for domain admin');
-          return { valid: true, address, isDomainAdmin: true };
-        }
-
         const isGlobalAdmin = await this.isListedCaseInsensitive(address, 'epistery::admin');
         if (isGlobalAdmin) {
           console.log('[message-board] Same-domain auth successful for global admin');
-          return { valid: true, address, isGlobalAdmin: true };
+          return { valid: true, address, isGlobalAdmin: true, domain: req.domain };
+        }
+
+        const isDomainAdmin = await this.isListedCaseInsensitive(address, `${req.domain}::admin`);
+        if (isDomainAdmin) {
+          console.log('[message-board] Same-domain auth successful for domain admin');
+          return { valid: true, address, isDomainAdmin: true, domain: req.domain };
         }
       }
 
@@ -880,16 +898,29 @@ export default class MessageBoardAgent {
    * Read posts data from domain-specific file
    */
   readData(domain) {
-    const { postsFile } = this.getDomainFiles(domain);
-    return JSON.parse(readFileSync(postsFile, 'utf8'));
+    const config = new Config();
+    config.setPath(domain);
+
+    try {
+      const data = config.readFile('message-board-posts.json');
+      return JSON.parse(data.toString());
+    } catch (error) {
+      if (error.code === 'ENOENT') {
+        return { posts: [], nextId: 1 };
+      }
+      throw error;
+    }
   }
 
   /**
    * Write posts data to domain-specific file
    */
   writeData(domain, data) {
-    const { postsFile } = this.getDomainFiles(domain);
-    writeFileSync(postsFile, JSON.stringify(data, null, 2));
+    const config = new Config();
+    config.setPath(domain);
+    // Ensure directory exists by saving config first
+    config.save();
+    config.writeFile('message-board-posts.json', JSON.stringify(data, null, 2));
   }
 
   /**
@@ -963,7 +994,7 @@ export default class MessageBoardAgent {
    * Upload data to IPFS
    */
   async uploadToIPFS(data) {
-    if (!this.ipfsUrl) {
+    if (!this.rootConfig.ipfs.url) {
       console.warn('[message-board] IPFS URL not configured, skipping IPFS upload');
       return null;
     }
@@ -973,7 +1004,7 @@ export default class MessageBoardAgent {
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
       formData.append('file', blob, 'post.json');
 
-      const response = await fetch(`${this.ipfsUrl}/add`, {
+      const response = await fetch(`${this.rootConfig.ipfs.url}/add`, {
         method: 'POST',
         body: formData
       });
@@ -989,7 +1020,7 @@ export default class MessageBoardAgent {
 
       return {
         hash: ipfsHash,
-        url: `${this.ipfsGateway}/ipfs/${ipfsHash}`
+        url: `${this.rootConfig.ipfs.gateway}/ipfs/${ipfsHash}`
       };
     } catch (error) {
       console.error('[message-board] IPFS upload error:', error);
@@ -1059,10 +1090,14 @@ export default class MessageBoardAgent {
     // Save batch state
     this.saveBatchState(domain);
 
-    console.log(`[message-board] Post added to batch chain for ${domain}. Total: ${state.postChain.length}/${this.batchThreshold}`);
+    const config = new Config();
+    config.setPath(domain);
+    const batchThreshold = config.data.messageBoard.batchThreshold;
+
+    console.log(`[message-board] Post added to batch chain for ${domain}. Total: ${state.postChain.length}/${batchThreshold}`);
 
     // Check if we need to flush to blockchain
-    if (state.postChain.length >= this.batchThreshold) {
+    if (state.postChain.length >= batchThreshold) {
       await this.flushBatch(domain);
     }
 
@@ -1124,13 +1159,15 @@ export default class MessageBoardAgent {
    */
   saveBatchState(domain) {
     const state = this.getDomainState(domain);
-    const { batchFile } = this.getDomainFiles(domain);
+    const config = new Config();
+    config.setPath(domain);
+
     const batchData = {
       chain: state.postChain,
       lastHash: state.lastHash,
       lastFlush: Date.now()
     };
-    writeFileSync(batchFile, JSON.stringify(batchData, null, 2));
+    config.writeFile('message-board-batch.json', JSON.stringify(batchData, null, 2));
   }
 
   /**
@@ -1152,33 +1189,27 @@ export default class MessageBoardAgent {
   }
 
   /**
-   * Load sidebar links from Config storage
+   * Load sidebar links from Config storage for a specific domain
    */
-  async loadSidebarLinks() {
+  loadSidebarLinks(domain) {
     try {
-      const { Config } = await import('epistery');
       const config = new Config();
-      const linksData = config.readFile('sidebar-links.json').toString();
-      this.sidebarLinks = JSON.parse(linksData);
-      console.log(`[message-board] Loaded ${this.sidebarLinks.length} sidebar links`);
+      config.setPath(domain);
+      const linksData = config.readFile('sidebar-links.json');
+      return JSON.parse(linksData.toString());
     } catch (error) {
-      // No links file yet
-      this.sidebarLinks = [];
+      // No links file yet, return empty array
+      return [];
     }
   }
 
   /**
-   * Save sidebar links to Config storage
+   * Save sidebar links to Config storage for a specific domain
    */
-  async saveSidebarLinks() {
-    try {
-      const { Config } = await import('epistery');
-      const config = new Config();
-      config.writeFile('sidebar-links.json', JSON.stringify(this.sidebarLinks, null, 2));
-      console.log(`[message-board] Saved ${this.sidebarLinks.length} sidebar links`);
-    } catch (error) {
-      console.error('[message-board] Failed to save sidebar links:', error);
-      throw error;
-    }
+  saveSidebarLinks(domain, links) {
+    const config = new Config();
+    config.setPath(domain);
+    config.save(); // Ensure directory exists
+    config.writeFile('sidebar-links.json', JSON.stringify(links, null, 2));
   }
 }

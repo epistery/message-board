@@ -87,8 +87,6 @@ async function checkAuthStatus() {
         }
       }
 
-      console.log('[message-board] Final wallet:', wallet);
-
       if (wallet && wallet.address) {
         const address = wallet.rivetAddress || wallet.address;
         console.log('[message-board] Authenticated as:', address);
