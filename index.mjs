@@ -90,6 +90,9 @@ export default class MessageBoardAgent {
     router.use((req, res, next) => {
       req.domain = req.hostname || 'localhost';
       req.boardConfig = this.getDomainConfig(req.domain);
+      if (!this.epistery && req.app.locals.epistery) {
+        this.epistery = req.app.locals.epistery;
+      }
       next();
     });
 

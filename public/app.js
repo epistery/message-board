@@ -1041,8 +1041,7 @@ window.submitGuestAccessRequest = async function() {
 };
 
 async function requestAccess(address, customMessage, customName) {
-  const hostname = window.location.hostname;
-  const listName = `${hostname}::admin`;
+  const listName = 'epistery::editor';
 
   const response = await fetch('/agent/epistery/white-list/request-access', {
     method: 'POST',
