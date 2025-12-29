@@ -851,8 +851,8 @@ async function checkPostingPermission(address) {
       if (!data.canPost) {
         // Wait for DOM to be ready
         const waitForElement = setInterval(() => {
-          const container = document.getElementById('create-post');
-          if (container) {
+          const sidebarBox = document.getElementById('sidebar-access-box');
+          if (sidebarBox) {
             clearInterval(waitForElement);
             showWelcomeBox(address);
           }
@@ -904,32 +904,53 @@ function showGuestAccessRequest() {
   `;
 }
 
-// Show welcome box for users without posting permission
-function showWelcomeBox(address) {
+// UI State Management
+function hidePostForm() {
   const container = document.getElementById('create-post');
-  if (!container) {
-    console.error('[message-board] create-post element not found');
+  if (container) {
+    container.style.display = 'none';
+  }
+}
+
+function showPostForm() {
+  const container = document.getElementById('create-post');
+  if (container) {
+    container.style.display = 'block';
+  }
+}
+
+function showSidebarAccessBox() {
+  const sidebarBox = document.getElementById('sidebar-access-box');
+  if (!sidebarBox) {
+    console.error('[message-board] sidebar-access-box element not found');
     return;
   }
-  container.innerHTML = `
-    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 12px; color: white; text-align: center; box-sizing: border-box;">
-      <h2 style="margin: 0 0 15px 0; font-size: 24px;">Welcome to the Message Board! 👋</h2>
-      <p style="margin: 0 0 20px 0; font-size: 16px; opacity: 0.95;">
-        You're authenticated, but you'll need access to post messages.
-      </p>
-      <button
-        onclick="showRequestAccessForm()"
-        style="background: white; color: #667eea; border: none; padding: 12px 30px; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.1);"
-      >
-        Request Access to Post
-      </button>
-    </div>
+  sidebarBox.innerHTML = `
+    <h4>🔐 Request Access</h4>
+    <p>You need permission to post messages on this board.</p>
+    <button onclick="showRequestAccessForm()">Request Access to Post</button>
   `;
 }
 
-// Show request access form
+function hideSidebarAccessBox() {
+  const sidebarBox = document.getElementById('sidebar-access-box');
+  if (sidebarBox) {
+    sidebarBox.innerHTML = '';
+  }
+}
+
+// Show welcome state for users without posting permission
+function showWelcomeBox(address) {
+  hidePostForm();
+  showSidebarAccessBox();
+}
+
+// Show request access form in the main create-post area
 window.showRequestAccessForm = function() {
   const container = document.getElementById('create-post');
+  if (!container) return;
+
+  container.style.display = 'block';
   container.innerHTML = `
     <div style="background: #f8f9fa; padding: 25px; border-radius: 12px; border: 2px solid #667eea; box-sizing: border-box;">
       <h3 style="margin: 0 0 15px 0; color: #333;">Request Posting Access</h3>
@@ -949,7 +970,7 @@ window.showRequestAccessForm = function() {
           Submit Request
         </button>
         <button
-          onclick="showWelcomeBox('${currentUser.address}')"
+          onclick="cancelAccessRequest()"
           style="flex: 0 0 auto; background: #6c757d; color: white; border: none; padding: 12px 20px; border-radius: 8px; font-size: 16px; cursor: pointer;"
         >
           Cancel
@@ -958,6 +979,15 @@ window.showRequestAccessForm = function() {
     </div>
   `;
   document.getElementById('access-request-message').focus();
+};
+
+// Cancel access request and return to welcome state
+window.cancelAccessRequest = function() {
+  const container = document.getElementById('create-post');
+  if (container) {
+    container.style.display = 'none';
+  }
+  showSidebarAccessBox();
 };
 
 // Submit access request

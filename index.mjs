@@ -102,7 +102,7 @@ export default class MessageBoardAgent {
     });
 
     // Serve static files
-    router.use('/static', express.static(path.join(__dirname, 'public')));
+    router.use('/client', express.static(path.join(__dirname, 'client')));
 
     // Serve icon
     router.get('/icon.svg', (req, res) => {
