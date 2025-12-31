@@ -10,28 +10,10 @@
       box-sizing: border-box;
     }
 
-    .board-container {
-      display: flex;
-      flex: 1;
-      overflow: hidden;
-    }
-
     .board-main {
-      flex: 1;
-      overflow-y: auto;
-      padding: var(--spacer3);
       max-width: 800px;
       margin: 0 auto;
       width: 100%;
-    }
-
-    .board-sidebar {
-      width: 300px;
-      flex-shrink: 0;
-      background: var(--bg-color-quiet-d);
-      border-left: 1px solid var(--page-border);
-      overflow-y: auto;
-      padding: var(--spacer2);
     }
 
     .sidebar-title {
@@ -441,8 +423,8 @@
   </nav>
 </header>
 
-  <main class="board-container">
-    <div class="board-main">
+  <main class="console-layout">
+    <div class="console-main board-main">
       <div class="board-header">
       </div>
 
@@ -465,7 +447,7 @@
     <div id="posts-container"></div>
     </div>
 
-    <div class="board-sidebar">
+    <div class="console-sidebar">
       <div id="sidebar-access-box"></div>
 
       <div class="sidebar-title">Links</div>
