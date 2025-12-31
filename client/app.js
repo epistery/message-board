@@ -977,30 +977,13 @@ window.submitGuestAccessRequest = async function() {
   const message = messageInput.value.trim();
 
   try {
-    // Get address from current permissions (already loaded)
-    if (!permissions || !permissions.address) {
-      // Ensure wallet exists first
-      console.log('[message-board] Ensuring wallet exists for guest request...');
-      const WitnessModule = await import('/lib/witness.js');
-      const Witness = WitnessModule.default;
-      await Witness.connect();
-
-      // Reload permissions after wallet creation
-      const response = await fetch('/agent/epistery/message-board/api/permissions');
-      if (response.ok) {
-        permissions = await response.json();
-      }
-
-      if (!permissions || !permissions.address) {
-        throw new Error('Failed to get wallet address');
-      }
+    // Use address from permissions (already loaded from /api/permissions)
+    if (!permissions?.address) {
+      throw new Error('No address available - please refresh the page');
     }
 
-    const address = permissions.address;
-    console.log('[message-board] Guest address:', address);
-
     // Submit access request
-    await requestAccess(address, message || 'Requesting access to post on message board', name);
+    await requestAccess(permissions.address, message || 'Requesting access to post on message board', name);
 
     // Show success message
     const container = document.getElementById('create-post');
