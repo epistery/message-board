@@ -2,6 +2,7 @@
 let posts = [];
 let ws = null;
 let currentUser = null;
+let permissions = null; // Loaded from /api/permissions
 
 // Initialize
 async function init() {
@@ -20,7 +21,7 @@ async function init() {
   await ensureWallet();
 
   // Check authentication status
-  checkAuthStatus();
+  await checkAuthStatus();
 
   console.log('[message-board] Ready');
 }
@@ -52,60 +53,41 @@ async function ensureWallet() {
 
 // Check authentication and update UI
 async function checkAuthStatus() {
-  // Try to get wallet address from localStorage (same-domain as home page)
+  // Get permissions from server (includes address, read, edit, admin flags)
   try {
-    console.log('[message-board] Checking localStorage for epistery wallet...');
-    console.log('[message-board] Origin:', window.location.origin);
-    console.log('[message-board] localStorage length:', localStorage.length);
-
-    const data = localStorage.getItem('epistery');
-    console.log('[message-board] localStorage.epistery exists:', !!data);
-
-    if (data) {
-      const parsed = JSON.parse(data);
-      console.log('[message-board] Parsed data keys:', Object.keys(parsed));
-      console.log('[message-board] Wallets count:', parsed.wallets ? parsed.wallets.length : 0);
-      console.log('[message-board] Default wallet ID:', parsed.defaultWalletId);
-
-      // Get the default wallet from the wallets array
-      let wallet = null;
-      if (parsed.wallets && parsed.wallets.length > 0) {
-        // Find the default wallet
-        wallet = parsed.wallets.find(w => w.id === parsed.defaultWalletId);
-        console.log('[message-board] Found default wallet:', !!wallet);
-
-        // Fallback to first wallet if no default
-        if (!wallet) {
-          wallet = parsed.wallets[0];
-          console.log('[message-board] Using first wallet as fallback');
-        }
-
-        // Extract actual wallet object from wrapper
-        if (wallet && wallet.wallet) {
-          console.log('[message-board] Wallet wrapper found, extracting...');
-          wallet = wallet.wallet;
-        }
-      }
-
-      if (wallet && wallet.address) {
-        const address = wallet.rivetAddress || wallet.address;
-        console.log('[message-board] Authenticated as:', address);
-
-        currentUser = { address };
-
-        // Check if user has posting permission
-        await checkPostingPermission(address);
-        return;
-      } else {
-        console.log('[message-board] No valid wallet address found in structure');
-      }
+    const response = await fetch('/agent/epistery/message-board/api/permissions');
+    if (!response.ok) {
+      throw new Error('Failed to get permissions');
     }
-  } catch (e) {
-    console.error('[message-board] Error checking localStorage:', e);
-  }
 
-  // No wallet in localStorage - show request access form
-  showGuestAccessRequest();
+    permissions = await response.json();
+    console.log('[message-board] Permissions:', permissions);
+
+    // Set currentUser from permissions for backward compatibility
+    if (permissions.address) {
+      currentUser = { address: permissions.address };
+      console.log('[message-board] Authenticated as:', permissions.address);
+
+      // Check if user has posting permission
+      if (!permissions.edit) {
+        // Wait for DOM to be ready
+        const waitForElement = setInterval(() => {
+          const sidebarBox = document.getElementById('sidebar-access-box');
+          if (sidebarBox) {
+            clearInterval(waitForElement);
+            showWelcomeBox(permissions.address);
+          }
+        }, 100);
+      }
+    } else {
+      // No wallet - show request access form
+      showGuestAccessRequest();
+    }
+  } catch (error) {
+    console.error('[message-board] Permission check error:', error);
+    // Fall back to showing guest access
+    showGuestAccessRequest();
+  }
 }
 
 // Load posts from API or localStorage
@@ -832,37 +814,7 @@ function showRequestAccessDialog(address, reason) {
   });
 }
 
-// Request access from white-list agent
-// Check if user has posting permission
-async function checkPostingPermission(address) {
-  try {
-    // Make a test request to check permissions without actually posting
-    const response = await fetch('/agent/epistery/message-board/api/check-permission', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Wallet-Address': address
-      },
-      credentials: 'include'
-    });
-
-    if (response.ok) {
-      const data = await response.json();
-      if (!data.canPost) {
-        // Wait for DOM to be ready
-        const waitForElement = setInterval(() => {
-          const sidebarBox = document.getElementById('sidebar-access-box');
-          if (sidebarBox) {
-            clearInterval(waitForElement);
-            showWelcomeBox(address);
-          }
-        }, 100);
-      }
-    }
-  } catch (error) {
-    console.log('[message-board] Permission check failed:', error);
-  }
-}
+// (checkPostingPermission removed - now using /api/permissions instead)
 
 // Show guest access request form
 function showGuestAccessRequest() {
@@ -1025,29 +977,26 @@ window.submitGuestAccessRequest = async function() {
   const message = messageInput.value.trim();
 
   try {
-    // First, ensure wallet exists (auto-create if needed)
-    console.log('[message-board] Ensuring wallet exists for guest request...');
-    const WitnessModule = await import('/lib/witness.js');
-    const Witness = WitnessModule.default;
-    await Witness.connect();
+    // Get address from current permissions (already loaded)
+    if (!permissions || !permissions.address) {
+      // Ensure wallet exists first
+      console.log('[message-board] Ensuring wallet exists for guest request...');
+      const WitnessModule = await import('/lib/witness.js');
+      const Witness = WitnessModule.default;
+      await Witness.connect();
 
-    // Get the wallet address
-    const data = localStorage.getItem('epistery');
-    if (!data) {
-      throw new Error('Failed to create wallet');
+      // Reload permissions after wallet creation
+      const response = await fetch('/agent/epistery/message-board/api/permissions');
+      if (response.ok) {
+        permissions = await response.json();
+      }
+
+      if (!permissions || !permissions.address) {
+        throw new Error('Failed to get wallet address');
+      }
     }
 
-    const parsed = JSON.parse(data);
-    let wallet = parsed.wallets?.[0];
-    if (wallet && wallet.wallet) {
-      wallet = wallet.wallet;
-    }
-
-    if (!wallet || !wallet.address) {
-      throw new Error('Failed to get wallet address');
-    }
-
-    const address = wallet.rivetAddress || wallet.address;
+    const address = permissions.address;
     console.log('[message-board] Guest address:', address);
 
     // Submit access request

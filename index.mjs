@@ -81,6 +81,27 @@ export default class MessageBoardAgent {
   }
 
   /**
+   * return edit/admin privileges from white list
+   */
+  async getPermissions(client, req) {
+    const result = {address:client.address,admin:false,edit:false,read:true};
+    if (client) {
+      if (this.epistery) {
+        try {
+          result.admin = await this.epistery.isListed(client.address, 'epistery::admin');
+          result.edit = result.admin || await this.epistery.isListed(client.address, 'epistery::editor');
+        } catch (error) {
+          console.error('[message-board] Permission check error:', error);
+        }
+      }
+      return result;
+    }
+
+    console.log('[wiki] Write denied: not on epistery::admin or epistery::editor');
+    return false;
+  }
+
+  /**
    * Attach the agent to an Express router
    * Called by AgentManager after instantiation
    *
@@ -157,6 +178,12 @@ export default class MessageBoardAgent {
         }
       });
     });
+
+    // Client permissions
+    router.get('/api/permissions', async (req, res) => {
+      const permissions = await this.getPermissions(req.episteryClient);
+      res.json(permissions);
+    })
 
     // Get sidebar links
     router.get('/links', (req, res) => {
