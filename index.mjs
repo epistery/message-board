@@ -519,6 +519,51 @@ export default class MessageBoardAgent {
         res.status(500).json({ error: error.message });
       }
     });
+
+    // Edit post (author only - admins cannot edit others' posts)
+    router.patch('/api/posts/:id', async (req, res) => {
+      try {
+        const postId = parseInt(req.params.id);
+        const { text } = req.body;
+
+        if (!text || text.trim().length === 0) {
+          return res.status(400).json({ error: 'Text is required' });
+        }
+
+        // Get authenticated user
+        const sameDomainAuth = await this.verifySameDomainAuth(req);
+        if (!sameDomainAuth.valid) {
+          return res.status(401).json({ error: 'Authentication required' });
+        }
+
+        const userAddress = sameDomainAuth.address;
+        const data = this.readData(req.domain);
+        const post = data.posts.find(p => p.id === postId);
+
+        if (!post) {
+          return res.status(404).json({ error: 'Post not found' });
+        }
+
+        // Only the author can edit their post
+        if (post.author.toLowerCase() !== userAddress.toLowerCase()) {
+          return res.status(403).json({
+            error: 'Only the author can edit this post'
+          });
+        }
+
+        // Update the post
+        post.text = text.trim();
+        post.editedAt = Date.now();
+        this.writeData(req.domain, data);
+
+        this.broadcast({ type: 'edit-post', post }, req.domain);
+        res.json(post);
+      } catch (error) {
+        console.error('[message-board] Edit error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
     // API endpoint to get links
     router.get('/api/links', async (req, res) => {
       try {

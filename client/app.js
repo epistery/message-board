@@ -1,12 +1,19 @@
 // Message Board Client Application
+import MarkUp from './MarkUp.mjs';
+
 let posts = [];
 let ws = null;
 let currentUser = null;
 let permissions = null; // Loaded from /api/permissions
+let markup = null; // Markdown renderer
 
 // Initialize
 async function init() {
   console.log('[message-board] Initializing...');
+
+  // Initialize markdown renderer
+  markup = new MarkUp();
+  await markup.init();
 
   // Load posts
   await loadPosts();
@@ -206,10 +213,11 @@ function renderPost(post) {
           </div>
         </div>
       </div>
-      <div class="post-text">${escapeHtml(post.text)}</div>
+      <div class="post-text">${markup ? markup.render(post.text) : escapeHtml(post.text)}</div>
       ${imageHtml}
       <div class="post-actions">
         <button class="post-action-btn" onclick="showCommentForm(${post.id})">💬 Comment</button>
+        ${currentUser && currentUser.address.toLowerCase() === post.author.toLowerCase() ? `<button class="post-action-btn" onclick="editPost(${post.id})">✏️ Edit</button>` : ''}
         ${currentUser ? `<button class="post-action-btn delete" onclick="deletePost(${post.id})">🗑️ Delete</button>` : ''}
       </div>
       ${commentsHtml}
@@ -242,7 +250,7 @@ function renderComment(comment) {
             <span class="comment-author">${authorDisplay}</span>
             <span class="comment-time">${timeAgo}</span>
           </div>
-          <div class="comment-text">${escapeHtml(comment.text)}</div>
+          <div class="comment-text">${markup ? markup.render(comment.text) : escapeHtml(comment.text)}</div>
         </div>
       </div>
     </div>
@@ -359,6 +367,96 @@ window.deletePost = async function(postId) {
     console.error('[message-board] Delete error:', error);
     showError(error.message);
   }
+};
+
+// Edit post - show edit form
+window.editPost = function(postId) {
+  const post = posts.find(p => p.id === postId);
+  if (!post) return;
+
+  const postElement = document.querySelector(`[data-post-id="${postId}"]`);
+  if (!postElement) return;
+
+  const postTextDiv = postElement.querySelector('.post-text');
+  const postActionsDiv = postElement.querySelector('.post-actions');
+
+  // Store original content
+  postElement.dataset.originalText = post.text;
+
+  // Replace post text with textarea
+  postTextDiv.innerHTML = `
+    <textarea id="edit-textarea-${postId}" class="edit-textarea" rows="4">${escapeHtml(post.text)}</textarea>
+    <div class="markdown-hint" style="margin-top: 6px;">
+      Markdown: **bold** *italic* [link](url) \`code\` - list
+    </div>
+  `;
+
+  // Replace actions with save/cancel
+  postActionsDiv.innerHTML = `
+    <button class="post-action-btn" onclick="saveEdit(${postId})">Save</button>
+    <button class="post-action-btn" onclick="cancelEdit(${postId})">Cancel</button>
+  `;
+
+  // Focus the textarea
+  const textarea = document.getElementById(`edit-textarea-${postId}`);
+  if (textarea) {
+    textarea.focus();
+    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+  }
+};
+
+// Save edited post
+window.saveEdit = async function(postId) {
+  const textarea = document.getElementById(`edit-textarea-${postId}`);
+  if (!textarea) return;
+
+  const text = textarea.value.trim();
+  if (!text) {
+    showError('Post text cannot be empty');
+    return;
+  }
+
+  try {
+    const headers = { 'Content-Type': 'application/json' };
+    if (currentUser && currentUser.address) {
+      headers['X-Wallet-Address'] = currentUser.address;
+    }
+
+    const response = await fetch(`/agent/epistery/message-board/api/posts/${postId}`, {
+      method: 'PATCH',
+      headers,
+      credentials: 'include',
+      body: JSON.stringify({ text })
+    });
+
+    if (!response.ok) {
+      const contentType = response.headers.get('content-type');
+      if (contentType && contentType.includes('application/json')) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to update post');
+      } else {
+        throw new Error(`Failed to update post (${response.status}).`);
+      }
+    }
+
+    // Update local post data
+    const post = posts.find(p => p.id === postId);
+    if (post) {
+      post.text = text;
+      post.editedAt = Date.now();
+    }
+    savePosts();
+    renderPosts();
+  } catch (error) {
+    console.error('[message-board] Edit error:', error);
+    showError(error.message);
+  }
+};
+
+// Cancel edit
+window.cancelEdit = function(postId) {
+  // Just re-render posts to restore original state
+  renderPosts();
 };
 
 // Setup event listeners
@@ -668,6 +766,16 @@ function handleWebSocketMessage(message) {
       posts = posts.filter(p => p.id !== message.postId);
       savePosts();
       renderPosts();
+      break;
+
+    case 'edit-post':
+      const editedPost = posts.find(p => p.id === message.post.id);
+      if (editedPost) {
+        editedPost.text = message.post.text;
+        editedPost.editedAt = message.post.editedAt;
+        savePosts();
+        renderPosts();
+      }
       break;
   }
 }

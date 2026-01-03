@@ -92,6 +92,31 @@
       min-height: 80px;
     }
 
+    .markdown-hint {
+      font-size: 12px;
+      color: var(--text-color-quiet);
+      margin-top: 6px;
+      font-family: monospace;
+    }
+
+    .edit-textarea {
+      width: 100%;
+      padding: var(--spacer);
+      border: 1px solid var(--action-color);
+      border-radius: 6px;
+      font-family: inherit;
+      font-size: 14px;
+      resize: vertical;
+      min-height: 80px;
+      box-sizing: border-box;
+    }
+
+    .edit-textarea:focus {
+      outline: none;
+      border-color: var(--action-color);
+      box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.2);
+    }
+
     .form-actions {
       display: flex;
       justify-content: space-between;
@@ -217,8 +242,60 @@
       line-height: 1.6;
       color: var(--text-color);
       margin-bottom: var(--spacer);
-      white-space: pre-wrap;
       word-wrap: break-word;
+    }
+
+    .post-text p {
+      margin: 0 0 0.5em 0;
+    }
+
+    .post-text p:last-child {
+      margin-bottom: 0;
+    }
+
+    .post-text a {
+      color: var(--action-color);
+      text-decoration: none;
+    }
+
+    .post-text a:hover {
+      text-decoration: underline;
+    }
+
+    .post-text strong {
+      font-weight: 600;
+    }
+
+    .post-text code {
+      background: var(--bg-color-d);
+      padding: 0.15em 0.4em;
+      border-radius: 3px;
+      font-size: 0.9em;
+    }
+
+    .post-text pre {
+      background: var(--bg-color-d);
+      padding: var(--spacer);
+      border-radius: 6px;
+      overflow-x: auto;
+      margin: 0.5em 0;
+    }
+
+    .post-text pre code {
+      background: none;
+      padding: 0;
+    }
+
+    .post-text ul, .post-text ol {
+      margin: 0.5em 0;
+      padding-left: 1.5em;
+    }
+
+    .post-text blockquote {
+      border-left: 3px solid var(--page-border);
+      margin: 0.5em 0;
+      padding-left: var(--spacer);
+      color: var(--text-color-quiet);
     }
 
     .post-image {
@@ -433,6 +510,9 @@
     <div id="create-post">
       <div class="new-post-form">
         <textarea id="post-text" placeholder="Everything you post is yours, by law of math." rows="3"></textarea>
+        <div class="markdown-hint">
+          Markdown: **bold** *italic* [link](url) `code` - list
+        </div>
         <div class="form-actions">
           <label class="image-upload">
             <input type="file" id="image-input" accept="image/jpeg,image/jpg,image/png,image/gif,image/webp,image/svg+xml">
