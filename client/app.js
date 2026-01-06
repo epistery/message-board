@@ -75,6 +75,9 @@ async function checkAuthStatus() {
       currentUser = { address: permissions.address };
       console.log('[message-board] Authenticated as:', permissions.address);
 
+      // Re-render posts now that we have currentUser (for edit/delete buttons)
+      renderPosts();
+
       // Check if user has posting permission
       if (!permissions.edit) {
         // Wait for DOM to be ready
