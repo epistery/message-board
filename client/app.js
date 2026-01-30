@@ -80,18 +80,13 @@ async function checkAuthStatus() {
 
       // Check if user has posting permission
       if (!permissions.edit) {
-        // Wait for DOM to be ready
-        const waitForElement = setInterval(() => {
-          const sidebarBox = document.getElementById('sidebar-access-box');
-          if (sidebarBox) {
-            clearInterval(waitForElement);
-            showWelcomeBox(permissions.address);
-          }
-        }, 100);
+        // Hide post form for users without edit access
+        hidePostForm();
+        // requestAccess widget in sidebar handles access requests
       }
     } else {
-      // No wallet - show request access form
-      showGuestAccessRequest();
+      // No wallet yet - auto-wallet creation will handle this
+      // requestAccess widget will show once wallet is created
     }
   } catch (error) {
     console.error('[message-board] Permission check error:', error);
@@ -927,44 +922,10 @@ function showRequestAccessDialog(address, reason) {
 
 // (checkPostingPermission removed - now using /api/permissions instead)
 
-// Show guest access request form
+// Show guest access request form (deprecated - widget handles this now)
 function showGuestAccessRequest() {
-  const container = document.getElementById('create-post');
-  if (!container) {
-    console.error('[message-board] create-post element not found');
-    return;
-  }
-  container.innerHTML = `
-    <div style="background: #f8f9fa; padding: 25px; border-radius: 12px; border: 2px solid #667eea; box-sizing: border-box;">
-      <h3 style="margin: 0 0 10px 0; color: #333;">🔐 This site is open but requires users to request access.</h3>
-      <p style="margin: 0 0 15px 0; color: #666; font-size: 14px;">
-        Please provide your information to request access to post on this message board.
-      </p>
-      <div style="margin-bottom: 15px;">
-        <label style="display: block; margin-bottom: 5px; color: #333; font-size: 13px; font-weight: 500;">Your Name (optional)</label>
-        <input
-          type="text"
-          id="guest-request-name"
-          placeholder="e.g., John Smith"
-          style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; box-sizing: border-box;"
-        >
-      </div>
-      <div style="margin-bottom: 15px;">
-        <label style="display: block; margin-bottom: 5px; color: #333; font-size: 13px; font-weight: 500;">Message (optional)</label>
-        <textarea
-          id="guest-request-message"
-          placeholder="This is sent to the board admin"
-          style="width: 100%; min-height: 80px; padding: 10px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; font-family: inherit; resize: vertical; box-sizing: border-box;"
-        ></textarea>
-      </div>
-      <button
-        onclick="submitGuestAccessRequest()"
-        style="width: 100%; background: #667eea; color: white; border: none; padding: 12px; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer;"
-      >
-        Request Access
-      </button>
-    </div>
-  `;
+  // No-op: auto-wallet creation means no guests, requestAccess widget handles access requests
+  hidePostForm();
 }
 
 // UI State Management
@@ -982,141 +943,44 @@ function showPostForm() {
   }
 }
 
+// Widget handles sidebar access box display
 function showSidebarAccessBox() {
-  const sidebarBox = document.getElementById('sidebar-access-box');
-  if (!sidebarBox) {
-    console.error('[message-board] sidebar-access-box element not found');
-    return;
-  }
-  sidebarBox.innerHTML = `
-    <h4>🔐 Request Access</h4>
-    <p>You need permission to post messages on this board.</p>
-    <button onclick="showRequestAccessForm()">Request Access to Post</button>
-  `;
+  // No-op: requestAccess widget handles this
 }
 
 function hideSidebarAccessBox() {
-  const sidebarBox = document.getElementById('sidebar-access-box');
-  if (sidebarBox) {
-    sidebarBox.innerHTML = '';
-  }
+  // No-op: requestAccess widget handles this
 }
 
 // Show welcome state for users without posting permission
 function showWelcomeBox(address) {
   hidePostForm();
-  showSidebarAccessBox();
+  // requestAccess widget handles access box display
 }
 
-// Show request access form in the main create-post area
+// Widget handles request access form - these functions kept for backwards compatibility
 window.showRequestAccessForm = function() {
-  const container = document.getElementById('create-post');
-  if (!container) return;
-
-  container.style.display = 'block';
-  container.innerHTML = `
-    <div style="background: #f8f9fa; padding: 25px; border-radius: 12px; border: 2px solid #667eea; box-sizing: border-box;">
-      <h3 style="margin: 0 0 15px 0; color: #333;">Request Posting Access</h3>
-      <p style="margin: 0 0 15px 0; color: #666; font-size: 14px;">
-        Tell the administrators why you'd like to post on this message board.
-      </p>
-      <textarea
-        id="access-request-message"
-        placeholder="e.g., I'd like to contribute to discussions about..."
-        style="width: 100%; min-height: 100px; padding: 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; font-family: inherit; resize: vertical; box-sizing: border-box;"
-      ></textarea>
-      <div style="display: flex; gap: 10px; margin-top: 15px;">
-        <button
-          onclick="submitAccessRequest()"
-          style="flex: 1; background: #667eea; color: white; border: none; padding: 12px; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer;"
-        >
-          Submit Request
-        </button>
-        <button
-          onclick="cancelAccessRequest()"
-          style="flex: 0 0 auto; background: #6c757d; color: white; border: none; padding: 12px 20px; border-radius: 8px; font-size: 16px; cursor: pointer;"
-        >
-          Cancel
-        </button>
-      </div>
-    </div>
-  `;
-  document.getElementById('access-request-message').focus();
+  // No-op: requestAccess widget handles this now
 };
 
-// Cancel access request and return to welcome state
 window.cancelAccessRequest = function() {
-  const container = document.getElementById('create-post');
-  if (container) {
-    container.style.display = 'none';
-  }
-  showSidebarAccessBox();
+  // No-op: requestAccess widget handles this now
 };
 
-// Submit access request
 window.submitAccessRequest = async function() {
-  const messageInput = document.getElementById('access-request-message');
-  const message = messageInput.value.trim();
-
-  if (!message) {
-    alert('Please provide a message explaining why you need access');
-    return;
-  }
-
-  try {
-    await requestAccess(currentUser.address, message, '');
-
-    const container = document.getElementById('create-post');
-    container.innerHTML = `
-      <div style="background: #d4edda; padding: 25px; border-radius: 12px; border: 2px solid #28a745; text-align: center; box-sizing: border-box;">
-        <h3 style="margin: 0 0 10px 0; color: #155724;">✓ Request Submitted!</h3>
-        <p style="margin: 0; color: #155724; font-size: 14px;">
-          Your access request has been sent to the administrators. You'll be able to post once they approve your request.
-        </p>
-      </div>
-    `;
-  } catch (error) {
-    alert('Failed to submit request: ' + error.message);
-  }
+  // No-op: requestAccess widget handles this now
 };
 
-// Submit guest access request
+// Submit guest access request (deprecated - widget handles this now)
 window.submitGuestAccessRequest = async function() {
-  const nameInput = document.getElementById('guest-request-name');
-  const messageInput = document.getElementById('guest-request-message');
-  const name = nameInput.value.trim();
-  const message = messageInput.value.trim();
-
-  try {
-    // Use address from permissions (already loaded from /api/permissions)
-    if (!permissions?.address) {
-      throw new Error('No address available - please refresh the page');
-    }
-
-    // Submit access request
-    await requestAccess(permissions.address, message || 'Requesting access to post on message board', name);
-
-    // Show success message
-    const container = document.getElementById('create-post');
-    container.innerHTML = `
-      <div style="background: #d4edda; padding: 25px; border-radius: 12px; border: 2px solid #28a745; text-align: center; box-sizing: border-box;">
-        <h3 style="margin: 0 0 10px 0; color: #155724;">✓ Request Submitted!</h3>
-        <p style="margin: 0; color: #155724; font-size: 14px;">
-          Your access request has been sent to the administrators. You'll be able to post once they approve your request.
-        </p>
-        ${address ? `<p style="margin-top: 10px; font-size: 12px; color: #155724; opacity: 0.8;">Your wallet address: ${address}</p>` : ''}
-      </div>
-    `;
-  } catch (error) {
-    console.error('[message-board] Guest access request error:', error);
-    showError('Failed to submit request: ' + error.message);
-  }
+  // No-op: requestAccess widget handles this now
 };
 
 async function requestAccess(address, customMessage, customName) {
-  const listName = 'epistery::editor';
+  const listName = 'message-board::poster';
+  const agentName = '@epistery/message-board';
 
-  const response = await fetch('/agent/epistery/white-list/request-access', {
+  const response = await fetch('/api/acl/request-access', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'
@@ -1124,7 +988,7 @@ async function requestAccess(address, customMessage, customName) {
     body: JSON.stringify({
       address,
       listName,
-      agentName: 'message-board',
+      agentName,
       message: customMessage || 'Requesting access to post on message board',
       name: customName || ''
     })

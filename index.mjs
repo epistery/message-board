@@ -3,10 +3,14 @@ import { WebSocketServer } from 'ws';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { createRequire } from 'module';
 import { Config } from 'epistery';
 import crypto from 'crypto';
 import https from "https";
 import http from "http";
+
+const require = createRequire(import.meta.url);
+const ethers = require('ethers');
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -34,6 +38,37 @@ export default class MessageBoardAgent {
     // Per-domain state (keyed by domain)
     this.domainStates = new Map();
 
+  }
+
+  /**
+   * Get DomainAgent contract instance for ACL operations
+   * Demonstrates new contract architecture (not backwards-compatible methods)
+   */
+  async getContract(domain) {
+    const config = new Config();
+    config.setPath(domain);
+
+    const contractAddress = config.data?.contract_address;
+    if (!contractAddress) {
+      throw new Error('Contract not deployed for domain');
+    }
+
+    const serverWallet = config.data?.wallet;
+    const provider = config.data?.provider;
+
+    if (!serverWallet || !provider) {
+      throw new Error('Server wallet or provider not configured');
+    }
+
+    // Load DomainAgent artifact from epistery-host
+    const DomainAgentArtifact = JSON.parse(
+      readFileSync(path.join(__dirname, '../epistery-host/artifacts/contracts/DomainAgent.sol/DomainAgent.json'), 'utf8')
+    );
+
+    const ethersProvider = new ethers.providers.JsonRpcProvider(provider.rpc);
+    const wallet = ethers.Wallet.fromMnemonic(serverWallet.mnemonic).connect(ethersProvider);
+
+    return new ethers.Contract(contractAddress, DomainAgentArtifact.abi, wallet);
   }
 
   getDomainConfig(domain) {
@@ -81,18 +116,17 @@ export default class MessageBoardAgent {
   }
 
   /**
-   * return edit/admin privileges from white list
+   * Get permissions using DomainAgent contract
+   * Demonstrates new contract architecture with isInACL()
    */
   async getPermissions(client, req) {
     const result = {address:client.address,admin:false,edit:false,read:true};
-    if (client) {
-      if (this.epistery) {
-        try {
-          result.admin = await this.epistery.isListed(client.address, 'epistery::admin');
-          result.edit = result.admin || await this.epistery.isListed(client.address, 'epistery::editor');
-        } catch (error) {
-          console.error('[message-board] Permission check error:', error);
-        }
+    if (client && req.domain) {
+      try {
+        result.admin = await this.isInACL(client.address, 'epistery::admin', req.domain);
+        result.edit = result.admin || await this.isInACL(client.address, 'epistery::editor', req.domain);
+      } catch (error) {
+        console.error('[message-board] Permission check error:', error);
       }
       return result;
     }
@@ -594,7 +628,7 @@ export default class MessageBoardAgent {
           return res.status(401).json({ error: 'Not authenticated' });
         }
 
-        const isAdmin = await req.app.locals.epistery.isListed(req.episteryClient.address, 'epistery::admin');
+        const isAdmin = await this.isInACL(req.episteryClient.address, 'epistery::admin', domain);
         if (!isAdmin) {
           return res.status(403).json({ error: 'Not authorized' });
         }
@@ -636,7 +670,7 @@ export default class MessageBoardAgent {
           return res.status(401).json({ error: 'Not authenticated' });
         }
 
-        const isAdmin = await req.app.locals.epistery.isListed(req.episteryClient.address, 'epistery::admin');
+        const isAdmin = await this.isInACL(req.episteryClient.address, 'epistery::admin', domain);
         if (!isAdmin) {
           return res.status(403).json({ error: 'Not authorized' });
         }
@@ -703,7 +737,7 @@ export default class MessageBoardAgent {
       try {
         // 1. Check if global admin (highest privilege)
         console.log(`[message-board] Checking global admin for ${address}`);
-        const isGlobalAdmin = await this.epistery.isListed(address, 'epistery::admin');
+        const isGlobalAdmin = await this.isInACL(address, 'epistery::admin', verification.domain);
         console.log(`[message-board] Global admin check result:`, isGlobalAdmin);
 
         if (isGlobalAdmin) {
@@ -720,7 +754,7 @@ export default class MessageBoardAgent {
         // Format: {resource}::{role}
         const domainAdminList = `${verification.domain}::admin`;
         console.log(`[message-board] Checking domain admin for ${address} on list ${domainAdminList}`);
-        const isDomainAdmin = await this.epistery.isListed(address, domainAdminList);
+        const isDomainAdmin = await this.isInACL(address, domainAdminList, verification.domain || req.domain);
         console.log(`[message-board] Domain admin check result:`, isDomainAdmin);
 
         if (isDomainAdmin) {
@@ -737,7 +771,7 @@ export default class MessageBoardAgent {
         // 3. Check if on posting whitelist
         const boardConfig = req.boardConfig.data.messageBoard;
         console.log(`[message-board] Checking posting whitelist for ${address} on list ${boardConfig.postingList}`);
-        const isOnPostingList = await this.epistery.isListed(address, boardConfig.postingList);
+        const isOnPostingList = await this.isInACL(address, boardConfig.postingList, verification.domain);
         console.log(`[message-board] Posting whitelist check result:`, isOnPostingList);
 
         if (isOnPostingList) {
@@ -788,21 +822,21 @@ export default class MessageBoardAgent {
     if (this.epistery) {
       try {
         // Check global admin
-        const isGlobalAdmin = await this.epistery.isListed(address, 'epistery::admin');
+        const isGlobalAdmin = await this.isInACL(address, 'epistery::admin', verification.domain);
         if (isGlobalAdmin) {
           return { allowed: true, user: { address }, method: 'global-admin' };
         }
 
         // Check domain admin
         const domainAdminList = `${sameDomainAuth.domain}::admin`;
-        const isDomainAdmin = await this.epistery.isListed(address, domainAdminList);
+        const isDomainAdmin = await this.isInACL(address, domainAdminList, verification.domain || req.domain);
         if (isDomainAdmin) {
           return { allowed: true, user: { address }, method: 'domain-admin' };
         }
 
         // Check moderator list
         const boardConfig = req.boardConfig.data.messageBoard;
-        const isModerator = await this.epistery.isListed(address, boardConfig.moderatorList);
+        const isModerator = await this.isInACL(address, boardConfig.moderatorList, req.domain);
         if (isModerator) {
           return { allowed: true, user: { address }, method: 'moderator' };
         }
@@ -926,20 +960,22 @@ export default class MessageBoardAgent {
 
       console.log('[message-board] verifySameDomainAuth - checking address:', address);
 
-      // Verify this address is on domain admin white-list
-      // Format: {resource}::{role} where resource is domain name, role is access level
-      if (this.epistery) {
-        const isGlobalAdmin = await this.isListedCaseInsensitive(address, 'epistery::admin');
+      // Verify this address is on domain admin ACL
+      // Uses DomainAgent contract directly with isInACL()
+      try {
+        const isGlobalAdmin = await this.isListedCaseInsensitive(address, 'epistery::admin', req.domain);
         if (isGlobalAdmin) {
           console.log('[message-board] Same-domain auth successful for global admin');
           return { valid: true, address, isGlobalAdmin: true, domain: req.domain };
         }
 
-        const isDomainAdmin = await this.isListedCaseInsensitive(address, `${req.domain}::admin`);
+        const isDomainAdmin = await this.isListedCaseInsensitive(address, `${req.domain}::admin`, req.domain);
         if (isDomainAdmin) {
           console.log('[message-board] Same-domain auth successful for domain admin');
           return { valid: true, address, isDomainAdmin: true, domain: req.domain };
         }
+      } catch (error) {
+        console.error('[message-board] ACL check failed:', error);
       }
 
       console.log('[message-board] Same-domain auth failed - not an admin');
@@ -951,13 +987,24 @@ export default class MessageBoardAgent {
   }
 
   /**
-   * Case-insensitive whitelist check
-   * Ethereum addresses are case-insensitive but string comparison is not
+   * Check if address is in ACL using DomainAgent contract
+   * Demonstrates new contract architecture with isInACL()
    */
-  async isListedCaseInsensitive(address, listName) {
-    const list = await this.epistery.getList(listName);
-    const addressLower = address.toLowerCase();
-    return list.some(entry => entry.addr.toLowerCase() === addressLower);
+  async isInACL(address, listName, domain) {
+    try {
+      const contract = await this.getContract(domain);
+      return await contract.isInACL(listName, address);
+    } catch (error) {
+      console.error(`[message-board] ACL check error for ${listName}:`, error);
+      return false;
+    }
+  }
+
+  /**
+   * Case-insensitive ACL check (alias for isInACL for backwards compatibility)
+   */
+  async isListedCaseInsensitive(address, listName, domain) {
+    return this.isInACL(address, listName, domain);
   }
 
   /**

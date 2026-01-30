@@ -338,6 +338,12 @@
     .input-group .btn {
       white-space: nowrap;
     }
+
+    iframe {
+      width: 100%;
+      border: 0;
+      height: 300px;
+    }
   </style>
 </head>
 <body>
@@ -382,25 +388,12 @@
 
     <div class="console-layout">
       <!-- Moderators Panel -->
-      <section class="console-panel">
-        <div class="panel-header">
-          <h2>Moderators</h2>
-          <button class="btn btn-primary" onclick="showAddModal('moderator')">Add Moderator</button>
-        </div>
-
-        <div id="moderators-list"></div>
-      </section>
-
-      <!-- Posting Whitelist Panel -->
-      <section class="console-panel">
-        <div class="panel-header">
-          <h2>Posting Whitelist</h2>
-          <button class="btn btn-primary" onclick="showAddModal('posting')">Add Member</button>
-        </div>
-
-        <div id="posting-list"></div>
-      </section>
     </div>
+
+    <!-- Access Control Lists (shared from epistery-host) -->
+    <section class="console-panel full-width">
+      <iframe src="/page/acl?agent=@epistery/message-board"></iframe>
+    </section>
 
     <!-- Sidebar Links Panel -->
     <section class="console-panel full-width">
@@ -503,7 +496,7 @@
   <footer>
     <div class="container">
       <div class="footer-bottom">
-        <p>&copy; 2025 Rootz Corp. Powered by Epistery.</p>
+        <p>&copy; 2026 Rootz Corp. Powered by Epistery.</p>
       </div>
     </div>
   </footer>

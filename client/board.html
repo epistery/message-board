@@ -449,45 +449,10 @@
       padding: var(--spacer3);
       color: var(--text-color-quiet);
     }
-
-    /* Sidebar access box */
-    #sidebar-access-box {
-      background: var(--bg-color);
-      border: 1px solid var(--page-border);
-      border-radius: 8px;
-      padding: var(--spacer2);
-      margin-bottom: var(--spacer2);
+    .request-access-widget {
+      margin-bottom: var(--spacer);
     }
 
-    #sidebar-access-box h4 {
-      margin: 0 0 var(--spacerhalf) 0;
-      font-size: 14px;
-      color: var(--text-color);
-    }
-
-    #sidebar-access-box p {
-      margin: 0 0 var(--spacer) 0;
-      font-size: 13px;
-      color: var(--text-color-quiet);
-      line-height: 1.4;
-    }
-
-    #sidebar-access-box button {
-      width: 100%;
-      padding: 8px 12px;
-      font-size: 13px;
-      background: var(--action-color);
-      color: white;
-      border: none;
-      border-radius: 6px;
-      cursor: pointer;
-      font-weight: 500;
-      transition: all 0.2s;
-    }
-
-    #sidebar-access-box button:hover {
-      background: var(--action-color-hilite);
-    }
   </style>
   <script src="/script/common.js"></script>
 </head>
@@ -528,7 +493,7 @@
     </div>
 
     <div class="console-sidebar">
-      <div id="sidebar-access-box"></div>
+      <div class="request-access-widget" data-widget="requestAccess" data-agent="@epistery/message-board" data-list="message-board::poster"></div>
 
       <div class="sidebar-title">Links</div>
       <ul class="sidebar-links" id="sidebar-links">
@@ -540,11 +505,12 @@
   <footer>
     <div class="container">
       <div class="footer-bottom">
-        <p>&copy; 2025 Rootz Corp. Powered by Epistery.</p>
+        <p>&copy; 2026 Rootz Corp. Powered by Epistery.</p>
       </div>
     </div>
   </footer>
 
+  <script type="module" src="/script/widgets.mjs"></script>
   <script type="module" src="/agent/epistery/message-board/client/app.js"></script>
   <script>
     // Load sidebar links
