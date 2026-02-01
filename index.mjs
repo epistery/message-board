@@ -19,7 +19,7 @@ const __dirname = path.dirname(__filename);
  * Message Board Agent
  *
  * Provides a discussion board / posting wall for epistery hosts.
- * Access control via white-list integration and notabot scores.
+ * Access control integration and notabot scores.
  * Posts are stored on IPFS as Data Wallets with user + server signatures.
  * Batching: 5 posts before paying gas to store on-chain.
  * This is the main entry point loaded by AgentManager.
@@ -225,12 +225,12 @@ export default class MessageBoardAgent {
       res.json(links);
     });
 
-    // Add sidebar link (requires moderator permission)
+    // Add sidebar link (requires admin permission)
     router.post('/links', async (req, res) => {
       try {
-        const permission = await this.checkModeratorPermission(req);
+        const permission = await this.checkAdminPermission(req);
         if (!permission.allowed) {
-          return res.status(403).json({ error: 'Only moderators can manage links' });
+          return res.status(403).json({ error: 'Only admins can manage links' });
         }
 
         const { title, url } = req.body;
@@ -249,12 +249,12 @@ export default class MessageBoardAgent {
       }
     });
 
-    // Delete sidebar link (requires moderator permission)
+    // Delete sidebar link (requires admin permission)
     router.delete('/links/:index', async (req, res) => {
       try {
-        const permission = await this.checkModeratorPermission(req);
+        const permission = await this.checkAdminPermission(req);
         if (!permission.allowed) {
-          return res.status(403).json({ error: 'Only moderators can manage links' });
+          return res.status(403).json({ error: 'Only admins can manage links' });
         }
 
         const index = parseInt(req.params.index);
@@ -280,13 +280,13 @@ export default class MessageBoardAgent {
       res.json(imageSettings);
     });
 
-    // Update image settings (requires moderator permission)
+    // Update image settings (requires admin permission)
     router.patch('/api/settings/image', async (req, res) => {
       try {
-        // Check moderator permission
-        const permission = await this.checkModeratorPermission(req);
+        // Check admin permission
+        const permission = await this.checkAdminPermission(req);
         if (!permission.allowed) {
-          return res.status(403).json({ error: 'Only moderators can update settings' });
+          return res.status(403).json({ error: 'Only admins can update settings' });
         }
 
         const updates = req.body;
@@ -510,18 +510,16 @@ export default class MessageBoardAgent {
       }
     });
 
-    // Delete post (moderators only)
+    // Delete post (author or admin)
     router.delete('/api/posts/:id', async (req, res) => {
       try {
         const postId = parseInt(req.params.id);
 
-        // Get authenticated user
-        const sameDomainAuth = await this.verifySameDomainAuth(req);
-        if (!sameDomainAuth.valid) {
+        if (!req.episteryClient) {
           return res.status(401).json({ error: 'Authentication required' });
         }
 
-        const userAddress = sameDomainAuth.address;
+        const userAddress = req.episteryClient.address;
         const data = this.readData(req.domain);
         const post = data.posts.find(p => p.id === postId);
 
@@ -530,14 +528,14 @@ export default class MessageBoardAgent {
         }
 
         // Check if user can delete this post
-        // Allow: post author OR epistery::admin OR {domain}::admin OR message-board::moderators
-        const isAuthor = post.author === userAddress;
-        const modPermission = await this.checkModeratorPermission(req);
-        const canDelete = isAuthor || modPermission.allowed;
+        // Allow: post author OR admin
+        const isAuthor = post.author.toLowerCase() === userAddress.toLowerCase();
+        const adminPermission = await this.checkAdminPermission(req);
+        const canDelete = isAuthor || adminPermission.allowed;
 
         if (!canDelete) {
           return res.status(403).json({
-            error: 'You can only delete your own posts unless you are a moderator'
+            error: 'You can only delete your own posts unless you are an admin'
           });
         }
 
@@ -554,7 +552,7 @@ export default class MessageBoardAgent {
       }
     });
 
-    // Edit post (author only - admins cannot edit others' posts)
+    // Edit post (author only)
     router.patch('/api/posts/:id', async (req, res) => {
       try {
         const postId = parseInt(req.params.id);
@@ -564,13 +562,11 @@ export default class MessageBoardAgent {
           return res.status(400).json({ error: 'Text is required' });
         }
 
-        // Get authenticated user
-        const sameDomainAuth = await this.verifySameDomainAuth(req);
-        if (!sameDomainAuth.valid) {
+        if (!req.episteryClient) {
           return res.status(401).json({ error: 'Authentication required' });
         }
 
-        const userAddress = sameDomainAuth.address;
+        const userAddress = req.episteryClient.address;
         const data = this.readData(req.domain);
         const post = data.posts.find(p => p.id === postId);
 
@@ -624,12 +620,8 @@ export default class MessageBoardAgent {
         }
 
         // Check if user is admin
-        if (!req.episteryClient || !req.app.locals.epistery) {
-          return res.status(401).json({ error: 'Not authenticated' });
-        }
-
-        const isAdmin = await this.isInACL(req.episteryClient.address, 'epistery::admin', domain);
-        if (!isAdmin) {
+        const permission = await this.checkAdminPermission(req);
+        if (!permission.allowed) {
           return res.status(403).json({ error: 'Not authorized' });
         }
 
@@ -666,12 +658,8 @@ export default class MessageBoardAgent {
         const domain = req.headers.host?.split(':')[0] || 'localhost';
 
         // Check if user is admin
-        if (!req.episteryClient || !req.app.locals.epistery) {
-          return res.status(401).json({ error: 'Not authenticated' });
-        }
-
-        const isAdmin = await this.isInACL(req.episteryClient.address, 'epistery::admin', domain);
-        if (!isAdmin) {
+        const permission = await this.checkAdminPermission(req);
+        if (!permission.allowed) {
           return res.status(403).json({ error: 'Not authorized' });
         }
 
@@ -715,137 +703,67 @@ export default class MessageBoardAgent {
 
   /**
    * Check if user has permission to post
-   * Hierarchy: Global Admin > Domain Admin > Posting Whitelist > Notabot Points
-   * NOTE: Authentication not implemented - delegation removed
+   * Uses agent-specific ACL configuration
    */
   async checkPostingPermission(req) {
-    // Try same-domain authentication
-    const sameDomainAuth = await this.verifySameDomainAuth(req);
-    let address, verification;
-
-    if (sameDomainAuth.valid) {
-      address = sameDomainAuth.address;
-      verification = sameDomainAuth;
-      console.log(`[message-board] Using same-domain auth for ${address}`);
-    } else {
-      console.log('[message-board] No valid authentication - delegation removed');
-      return { allowed: false, reason: 'Authentication not implemented' };
-    }
-
-    // Check permission hierarchy
-    if (this.epistery) {
-      try {
-        // 1. Check if global admin (highest privilege)
-        console.log(`[message-board] Checking global admin for ${address}`);
-        const isGlobalAdmin = await this.isInACL(address, 'epistery::admin', verification.domain);
-        console.log(`[message-board] Global admin check result:`, isGlobalAdmin);
-
-        if (isGlobalAdmin) {
-          const userName = await this.getUserName(req, address, 'epistery::admin');
-          console.log(`[message-board] User ${address} allowed as global admin (name: ${userName})`);
-          return {
-            allowed: true,
-            user: { address, name: userName || verification.name },
-            method: 'global-admin'
-          };
-        }
-
-        // 2. Check if domain admin
-        // Format: {resource}::{role}
-        const domainAdminList = `${verification.domain}::admin`;
-        console.log(`[message-board] Checking domain admin for ${address} on list ${domainAdminList}`);
-        const isDomainAdmin = await this.isInACL(address, domainAdminList, verification.domain || req.domain);
-        console.log(`[message-board] Domain admin check result:`, isDomainAdmin);
-
-        if (isDomainAdmin) {
-          // Fetch user's display name from white-list
-          const userName = await this.getUserName(req, address, domainAdminList);
-          console.log(`[message-board] User ${address} allowed as domain admin (name: ${userName})`);
-          return {
-            allowed: true,
-            user: { address, name: userName || verification.name },
-            method: 'domain-admin'
-          };
-        }
-
-        // 3. Check if on posting whitelist
-        const boardConfig = req.boardConfig.data.messageBoard;
-        console.log(`[message-board] Checking posting whitelist for ${address} on list ${boardConfig.postingList}`);
-        const isOnPostingList = await this.isInACL(address, boardConfig.postingList, verification.domain);
-        console.log(`[message-board] Posting whitelist check result:`, isOnPostingList);
-
-        if (isOnPostingList) {
-          const userName = await this.getUserName(req, address, boardConfig.postingList);
-          console.log(`[message-board] User ${address} allowed via posting whitelist (name: ${userName})`);
-          return {
-            allowed: true,
-            user: { address, name: userName || verification.name },
-            method: 'posting-whitelist'
-          };
-        }
-      } catch (error) {
-        console.error('[message-board] Permission check failed:', error);
-        console.error('[message-board] Error stack:', error.stack);
-      }
-    } else {
-      console.warn('[message-board] Epistery instance not available, allowing all authenticated users');
-      // If epistery not available (development mode), allow all authenticated users
-      return {
-        allowed: true,
-        user: { address, name: verification.name },
-        method: 'dev-mode'
-      };
-    }
-
-    // 4. Default: Allow all authenticated users (simplified for v1.0)
-    // Notabot points are collected but not enforced - agents can add their own rules later
-    console.log(`[message-board] User ${address} allowed as authenticated user`);
-    return {
-      allowed: true,
-      user: { address, name: verification.name },
-      method: 'authenticated'
-    };
-  }
-
-  /**
-   * Check if user has moderator permission
-   */
-  async checkModeratorPermission(req) {
-    const sameDomainAuth = await this.verifySameDomainAuth(req);
-
-    if (!sameDomainAuth.valid) {
+    // Check for authenticated client from epistery-host middleware
+    if (!req.episteryClient) {
+      console.log('[message-board] No authenticated client');
       return { allowed: false, reason: 'Authentication required' };
     }
 
-    const address = sameDomainAuth.address;
+    const address = req.episteryClient.address;
+    console.log(`[message-board] Checking permissions for ${address}`);
 
-    if (this.epistery) {
-      try {
-        // Check global admin
-        const isGlobalAdmin = await this.isInACL(address, 'epistery::admin', verification.domain);
-        if (isGlobalAdmin) {
-          return { allowed: true, user: { address }, method: 'global-admin' };
-        }
+    try {
+      const access = await req.domainAcl.checkAgentAccess('@epistery/message-board', address, req.hostname);
+      console.log(`[message-board] Access level for ${address}: ${access.level}`);
 
-        // Check domain admin
-        const domainAdminList = `${sameDomainAuth.domain}::admin`;
-        const isDomainAdmin = await this.isInACL(address, domainAdminList, verification.domain || req.domain);
-        if (isDomainAdmin) {
-          return { allowed: true, user: { address }, method: 'domain-admin' };
-        }
-
-        // Check moderator list
-        const boardConfig = req.boardConfig.data.messageBoard;
-        const isModerator = await this.isInACL(address, boardConfig.moderatorList, req.domain);
-        if (isModerator) {
-          return { allowed: true, user: { address }, method: 'moderator' };
-        }
-      } catch (error) {
-        console.error('[message-board] Moderator permission check failed:', error);
+      // Level 2 (editor) or higher can post
+      if (access.level >= 2) {
+        return {
+          allowed: true,
+          user: { address, name: null },
+          level: access.level
+        };
       }
+
+      return {
+        allowed: false,
+        reason: 'You need editor privileges to post. Request access in the sidebar.'
+      };
+    } catch (error) {
+      console.error('[message-board] Permission check failed:', error);
+      return {
+        allowed: false,
+        reason: 'Permission check failed'
+      };
+    }
+  }
+
+  /**
+   * Check if user has admin permission
+   */
+  async checkAdminPermission(req) {
+    if (!req.episteryClient) {
+      return { allowed: false, reason: 'Authentication required' };
     }
 
-    return { allowed: false, reason: 'Moderator permission required' };
+    const address = req.episteryClient.address;
+
+    try {
+      const access = await req.domainAcl.checkAgentAccess('@epistery/message-board', address, req.hostname);
+
+      // Level 3 (admin) required
+      if (access.level >= 3) {
+        return { allowed: true, user: { address }, level: access.level };
+      }
+
+      return { allowed: false, reason: 'Admin permission required' };
+    } catch (error) {
+      console.error('[message-board] Admin permission check failed:', error);
+      return { allowed: false, reason: 'Permission check failed' };
+    }
   }
 
   /**

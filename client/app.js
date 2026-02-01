@@ -50,8 +50,8 @@ async function ensureWallet() {
     console.log('[message-board] No wallet found, creating one...');
     const WitnessModule = await import('/lib/witness.js');
     const Witness = WitnessModule.default;
-    await Witness.connect();
-    console.log('[message-board] Wallet created successfully');
+    window.epistery = await Witness.connect();
+    console.log('[message-board] Wallet created successfully:', window.epistery.wallet.address);
   } catch (error) {
     console.log('[message-board] Could not auto-create wallet:', error.message);
     // Not critical - user can still view posts
@@ -977,7 +977,7 @@ window.submitGuestAccessRequest = async function() {
 };
 
 async function requestAccess(address, customMessage, customName) {
-  const listName = 'message-board::poster';
+  const listName = 'epistery::editor';
   const agentName = '@epistery/message-board';
 
   const response = await fetch('/api/acl/request-access', {

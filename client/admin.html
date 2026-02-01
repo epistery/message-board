@@ -8,7 +8,6 @@
   <style>
     .admin-container {
       max-width: 1200px;
-      margin: 0 auto;
       padding: var(--spacer3);
     }
 
@@ -352,9 +351,6 @@
       <a href="/" class="logo">
         <span class="logo-text">Message Board Admin</span>
       </a>
-      <div style="display: flex; gap: var(--spacer); align-items: center;">
-        <a href="/agent/epistery/message-board/board" class="btn btn-primary">View Board</a>
-      </div>
     </nav>
   </header>
 
@@ -362,33 +358,6 @@
     <div id="message-container"></div>
 
     <!-- Stats Panel -->
-    <section class="console-panel full-width">
-      <div class="panel-header">
-        <h2>Overview</h2>
-      </div>
-      <div class="stats">
-        <div class="stat-box">
-          <span id="post-count" class="stat-number">-</span>
-          <span class="stat-label">Total Posts</span>
-        </div>
-        <div class="stat-box">
-          <span id="moderator-count" class="stat-number">-</span>
-          <span class="stat-label">Moderators</span>
-        </div>
-        <div class="stat-box">
-          <span id="whitelist-count" class="stat-number">-</span>
-          <span class="stat-label">Posting Whitelist</span>
-        </div>
-        <div class="stat-box">
-          <span id="min-points" class="stat-number">-</span>
-          <span class="stat-label">Min Notabot Points</span>
-        </div>
-      </div>
-    </section>
-
-    <div class="console-layout">
-      <!-- Moderators Panel -->
-    </div>
 
     <!-- Access Control Lists (shared from epistery-host) -->
     <section class="console-panel full-width">
@@ -405,27 +374,6 @@
       <div id="links-list"></div>
     </section>
 
-    <!-- Configuration Panel -->
-    <section class="console-panel full-width">
-      <div class="panel-header">
-        <h2>Configuration</h2>
-      </div>
-
-      <div class="config-item">
-        <span class="config-label">Moderator List Name</span>
-        <span class="config-value" id="moderator-list-name">-</span>
-      </div>
-
-      <div class="config-item">
-        <span class="config-label">Posting Whitelist Name</span>
-        <span class="config-value" id="posting-list-name">-</span>
-      </div>
-
-      <div class="config-item">
-        <span class="config-label">Minimum Notabot Points Required</span>
-        <span class="config-value" id="min-notabot-points">-</span>
-      </div>
-    </section>
 
     <!-- Image Upload Settings Panel -->
     <section class="console-panel full-width">
@@ -654,28 +602,8 @@
         const health = await healthResponse.json();
         config = health.config;
 
-        // Update config display
-        document.getElementById('moderator-list-name').textContent = config.moderatorList;
-        document.getElementById('posting-list-name').textContent = config.postingList;
-        document.getElementById('min-notabot-points').textContent = config.minNotabotPoints;
-        document.getElementById('min-points').textContent = config.minNotabotPoints;
-
         // Load and display image settings
         await loadImageSettings();
-
-        // Load posts count
-        const postsResponse = await fetch('/agent/epistery/message-board/api/posts', {
-          credentials: 'include'
-        });
-        const posts = await postsResponse.json();
-        document.getElementById('post-count').textContent = posts.length;
-
-        // Load moderators
-        await loadList('moderator');
-
-        // Load posting whitelist
-        await loadList('posting');
-
       } catch (error) {
         console.error('[admin] Failed to load data:', error);
         showMessage('Failed to load admin data: ' + error.message, 'error');
