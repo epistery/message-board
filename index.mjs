@@ -215,7 +215,7 @@ export default class MessageBoardAgent {
 
     // Client permissions
     router.get('/api/permissions', async (req, res) => {
-      const permissions = await this.getPermissions(req.episteryClient);
+      const permissions = await this.getPermissions(req.episteryClient, req);
       res.json(permissions);
     })
 

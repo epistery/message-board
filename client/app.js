@@ -60,38 +60,41 @@ async function ensureWallet() {
 
 // Check authentication and update UI
 async function checkAuthStatus() {
-  // Get permissions from server (includes address, read, edit, admin flags)
+  // Use epistery-host's ACL endpoint (same as requestAccess widget)
   try {
-    const response = await fetch('/agent/epistery/message-board/api/permissions');
+    const response = await fetch('/api/acl/check-access?agent=' + encodeURIComponent('@epistery/message-board'));
     if (!response.ok) {
-      throw new Error('Failed to get permissions');
+      throw new Error('Failed to check access');
     }
 
-    permissions = await response.json();
-    console.log('[message-board] Permissions:', permissions);
+    const accessData = await response.json();
+    console.log('[message-board] Access check:', accessData);
 
-    // Set currentUser from permissions for backward compatibility
-    if (permissions.address) {
-      currentUser = { address: permissions.address };
-      console.log('[message-board] Authenticated as:', permissions.address);
+    if (accessData.address) {
+      currentUser = { address: accessData.address };
+      console.log('[message-board] Authenticated as:', accessData.address);
+
+      permissions = {
+        address: accessData.address,
+        level: accessData.level || 0,
+        edit: accessData.level >= 2,  // Level 2 (editor) or higher can post
+        admin: accessData.level >= 3  // Level 3 (admin) or higher
+      };
 
       // Re-render posts now that we have currentUser (for edit/delete buttons)
       renderPosts();
 
-      // Check if user has posting permission
-      if (!permissions.edit) {
-        // Hide post form for users without edit access
+      // Hide post form if user doesn't have edit access (level < 2)
+      if (accessData.level < 2) {
         hidePostForm();
-        // requestAccess widget in sidebar handles access requests
       }
     } else {
-      // No wallet yet - auto-wallet creation will handle this
-      // requestAccess widget will show once wallet is created
+      // No authenticated client
+      hidePostForm();
     }
   } catch (error) {
-    console.error('[message-board] Permission check error:', error);
-    // Fall back to showing guest access
-    showGuestAccessRequest();
+    console.error('[message-board] Access check error:', error);
+    hidePostForm();
   }
 }
 
