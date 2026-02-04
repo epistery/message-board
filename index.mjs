@@ -8,6 +8,7 @@ import { Config } from 'epistery';
 import crypto from 'crypto';
 import https from "https";
 import http from "http";
+import StorageFactory from '../epistery-host/utils/storage/StorageFactory.mjs';
 
 const require = createRequire(import.meta.url);
 const ethers = require('ethers');
@@ -38,6 +39,19 @@ export default class MessageBoardAgent {
     // Per-domain state (keyed by domain)
     this.domainStates = new Map();
 
+    // Storage backends (per domain)
+    this.storageBackends = new Map();
+  }
+
+  /**
+   * Get or create storage backend for a domain
+   */
+  async getStorage(domain) {
+    if (!this.storageBackends.has(domain)) {
+      const storage = await StorageFactory.create(null, domain, 'message-board');
+      this.storageBackends.set(domain, storage);
+    }
+    return this.storageBackends.get(domain);
   }
 
   /**
@@ -187,13 +201,18 @@ export default class MessageBoardAgent {
       res.sendFile(adminPath);
     });
 
-    // Serve board page (main UI)
+    // Serve board page (main UI) - routes to appropriate view based on config
     router.get('/board', (req, res) => {
-      const boardPath = path.join(__dirname, 'client/board.html');
-      if (!existsSync(boardPath)) {
-        return res.status(404).send('Board page not found');
+      const viewMode = req.boardConfig.data.messageBoard.viewMode || 'board';
+      const viewPath = path.join(__dirname, `client/${viewMode}.html`);
+
+      if (!existsSync(viewPath)) {
+        console.error(`[message-board] View file not found: ${viewPath}, falling back to board.html`);
+        const boardPath = path.join(__dirname, 'client/board.html');
+        return res.sendFile(boardPath);
       }
-      res.sendFile(boardPath);
+
+      res.sendFile(viewPath);
     });
 
     // API Routes
@@ -280,6 +299,174 @@ export default class MessageBoardAgent {
       res.json(imageSettings);
     });
 
+    // Get channels (filtered by user's access)
+    router.get('/api/channels', async (req, res) => {
+      try {
+        let channels = req.boardConfig.data.messageBoard.channels || [];
+
+        // Fix: parse any channels that were accidentally saved as strings
+        channels = channels.map(ch => {
+          if (typeof ch === 'string') {
+            try {
+              return JSON.parse(ch);
+            } catch (e) {
+              console.error('[message-board] Failed to parse channel string:', ch);
+              return null;
+            }
+          }
+          return ch;
+        }).filter(ch => ch !== null);
+
+        // Always include "General" pseudo-channel for posts without a channel
+        const accessibleChannels = [{ name: 'general', list: null, isPseudo: true }];
+
+        // Filter channels based on user's access
+        if (req.episteryClient && req.episteryClient.address) {
+          for (const channel of channels) {
+            if (!channel.list) {
+              // No ACL specified - check default access
+              const access = await req.domainAcl.checkAgentAccess(
+                '@epistery/message-board',
+                req.episteryClient.address,
+                req.hostname
+              );
+              if (access.level >= 1) { // Level 1 (reader) or higher
+                accessibleChannels.push(channel);
+              }
+            } else {
+              // Check specific list access
+              const isInList = await req.domainAcl.isInACL(
+                req.episteryClient.address,
+                channel.list
+              );
+              if (isInList) {
+                accessibleChannels.push(channel);
+              }
+            }
+          }
+        } else {
+          // No authenticated client - only show channels with no ACL
+          for (const channel of channels) {
+            if (!channel.list) {
+              accessibleChannels.push(channel);
+            }
+          }
+        }
+
+        res.json(accessibleChannels);
+      } catch (error) {
+        console.error('[message-board] Get channels error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Add channel (admin only)
+    router.post('/api/channels', async (req, res) => {
+      try {
+        const permission = await this.checkAdminPermission(req);
+        if (!permission.allowed) {
+          return res.status(403).json({ error: 'Only admins can add channels' });
+        }
+
+        const { name, list } = req.body;
+        if (!name || !/^[a-z0-9-]+$/.test(name)) {
+          return res.status(400).json({ error: 'Invalid channel name. Use lowercase letters, numbers, and hyphens only.' });
+        }
+
+        // Prevent creating "general" as it's reserved for the pseudo-channel
+        if (name === 'general') {
+          return res.status(400).json({ error: 'Channel name "general" is reserved for uncategorized posts.' });
+        }
+
+        if (!req.boardConfig.data.messageBoard.channels) {
+          req.boardConfig.data.messageBoard.channels = [];
+        }
+
+        // Check if channel already exists (handle string channels)
+        const existingChannel = req.boardConfig.data.messageBoard.channels.find(c => {
+          const ch = typeof c === 'string' ? JSON.parse(c) : c;
+          return ch.name === name;
+        });
+        if (existingChannel) {
+          return res.status(400).json({ error: 'Channel already exists' });
+        }
+
+        req.boardConfig.data.messageBoard.channels.push({
+          name,
+          list: list || null
+        });
+        req.boardConfig.save();
+
+        res.json({ success: true, channel: { name, list: list || null } });
+      } catch (error) {
+        console.error('[message-board] Add channel error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Delete channel (admin only)
+    router.delete('/api/channels/:name', async (req, res) => {
+      try {
+        const permission = await this.checkAdminPermission(req);
+        if (!permission.allowed) {
+          return res.status(403).json({ error: 'Only admins can delete channels' });
+        }
+
+        const { name } = req.params;
+        if (!req.boardConfig.data.messageBoard.channels) {
+          return res.status(404).json({ error: 'Channel not found' });
+        }
+
+        // Parse string channels and find matching one
+        const channels = req.boardConfig.data.messageBoard.channels;
+        const index = channels.findIndex(c => {
+          const channel = typeof c === 'string' ? JSON.parse(c) : c;
+          return channel.name === name;
+        });
+
+        if (index === -1) {
+          return res.status(404).json({ error: 'Channel not found' });
+        }
+
+        req.boardConfig.data.messageBoard.channels.splice(index, 1);
+        req.boardConfig.save();
+
+        res.json({ success: true });
+      } catch (error) {
+        console.error('[message-board] Delete channel error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Get view mode
+    router.get('/api/config/view-mode', (req, res) => {
+      const viewMode = req.boardConfig.data.messageBoard.viewMode || 'board';
+      res.json({ viewMode });
+    });
+
+    // Update view mode (requires admin permission)
+    router.put('/api/config/view-mode', async (req, res) => {
+      try {
+        const permission = await this.checkAdminPermission(req);
+        if (!permission.allowed) {
+          return res.status(403).json({ error: 'Only admins can change view mode' });
+        }
+
+        const { viewMode } = req.body;
+        if (!viewMode || !['board', 'chat'].includes(viewMode)) {
+          return res.status(400).json({ error: 'Invalid view mode. Must be "board" or "chat"' });
+        }
+
+        req.boardConfig.data.messageBoard.viewMode = viewMode;
+        req.boardConfig.save();
+
+        res.json({ success: true, viewMode });
+      } catch (error) {
+        console.error('[message-board] Update view mode error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
     // Update image settings (requires admin permission)
     router.patch('/api/settings/image', async (req, res) => {
       try {
@@ -329,11 +516,25 @@ export default class MessageBoardAgent {
       }
     });
 
-    // Get all posts (public, read-only)
-    router.get('/api/posts', (req, res) => {
+    // Get all posts (public, read-only), optionally filtered by channel
+    router.get('/api/posts', async (req, res) => {
       try {
-        const data = this.readData(req.domain);
-        res.json(data.posts);
+        const data = await this.readData(req.domain);
+        const { channel } = req.query;
+
+        let posts = data.posts;
+
+        // Filter by channel if specified
+        if (channel) {
+          if (channel === 'general') {
+            // "general" pseudo-channel shows posts with no channel
+            posts = posts.filter(post => !post.channel || post.channel === 'general');
+          } else {
+            posts = posts.filter(post => post.channel === channel);
+          }
+        }
+
+        res.json(posts);
       } catch (error) {
         res.status(500).json({ error: error.message });
       }
@@ -344,11 +545,24 @@ export default class MessageBoardAgent {
       try {
         console.log('[message-board] Received post request');
 
-        const { text, image } = req.body;
+        const { text, image, channel } = req.body;
 
         //TODO: Text is not required if an image is attached
         if (!text || text.trim().length === 0) {
           return res.status(400).json({ error: 'Text is required' });
+        }
+
+        // Validate channel if provided
+        if (channel && channel !== 'general') {
+          const channels = req.boardConfig.data.messageBoard.channels || [];
+          // Parse string channels and check if it exists
+          const channelExists = channels.find(c => {
+            const ch = typeof c === 'string' ? JSON.parse(c) : c;
+            return ch.name === channel;
+          });
+          if (!channelExists) {
+            return res.status(400).json({ error: 'Invalid channel' });
+          }
         }
 
         // Validate image if provided
@@ -408,7 +622,7 @@ export default class MessageBoardAgent {
           });
         }
 
-        const data = this.readData(req.domain);
+        const data = await this.readData(req.domain);
         const post = {
           id: data.nextId++,
           text: text.trim(),
@@ -416,12 +630,18 @@ export default class MessageBoardAgent {
           author: permission.user.address,
           authorName: permission.user.name || null,
           timestamp: Date.now(),
-          comments: []
+          comments: [],
+          channel: channel || null
         };
 
         // Add to local storage
         data.posts.unshift(post);
-        this.writeData(req.domain, data);
+
+        // Write individual post file
+        await this.writePost(req.domain, post);
+
+        // Update index
+        await this.writeData(req.domain, data);
 
         // Broadcast immediately
         this.broadcast({ type: 'new-post', post }, req.domain);
@@ -484,7 +704,7 @@ export default class MessageBoardAgent {
           });
         }
 
-        const data = this.readData(req.domain);
+        const data = await this.readData(req.domain);
         const post = data.posts.find(p => p.id === postId);
 
         if (!post) {
@@ -500,7 +720,10 @@ export default class MessageBoardAgent {
         };
 
         post.comments.push(comment);
-        this.writeData(req.domain, data);
+
+        // Write updated post with new comment
+        await this.writePost(req.domain, post);
+        await this.writeData(req.domain, data);
 
         this.broadcast({ type: 'new-comment', postId, comment }, req.domain);
         res.json(comment);
@@ -520,7 +743,7 @@ export default class MessageBoardAgent {
         }
 
         const userAddress = req.episteryClient.address;
-        const data = this.readData(req.domain);
+        const data = await this.readData(req.domain);
         const post = data.posts.find(p => p.id === postId);
 
         if (!post) {
@@ -539,10 +762,13 @@ export default class MessageBoardAgent {
           });
         }
 
-        // Delete the post
+        // Delete the post from storage
+        await this.deletePost(req.domain, postId);
+
+        // Remove from index
         const index = data.posts.findIndex(p => p.id === postId);
         data.posts.splice(index, 1);
-        this.writeData(req.domain, data);
+        await this.writeData(req.domain, data);
 
         this.broadcast({ type: 'delete-post', postId }, req.domain);
         res.json({ success: true });
@@ -567,7 +793,7 @@ export default class MessageBoardAgent {
         }
 
         const userAddress = req.episteryClient.address;
-        const data = this.readData(req.domain);
+        const data = await this.readData(req.domain);
         const post = data.posts.find(p => p.id === postId);
 
         if (!post) {
@@ -584,7 +810,10 @@ export default class MessageBoardAgent {
         // Update the post
         post.text = text.trim();
         post.editedAt = Date.now();
-        this.writeData(req.domain, data);
+
+        // Write updated post
+        await this.writePost(req.domain, post);
+        await this.writeData(req.domain, data);
 
         this.broadcast({ type: 'edit-post', post }, req.domain);
         res.json(post);
@@ -687,8 +916,8 @@ export default class MessageBoardAgent {
     });
 
     // Status endpoint
-    router.get('/status', (req, res) => {
-      const data = this.readData(req.domain);
+    router.get('/status', async (req, res) => {
+      const data = await this.readData(req.domain);
       const boardConfig = req.boardConfig.data.messageBoard;
       res.json({
         agent: 'message-board',
@@ -721,9 +950,14 @@ export default class MessageBoardAgent {
 
       // Level 2 (editor) or higher can post
       if (access.level >= 2) {
+        // Get user's name from ACL if available
+        console.log('[message-board] Fetching user name for:', address);
+        const userName = await this.getUserName(req, address);
+        console.log('[message-board] Got user name:', userName);
+
         return {
           allowed: true,
-          user: { address, name: null },
+          user: { address, name: userName },
           level: access.level
         };
       }
@@ -738,6 +972,45 @@ export default class MessageBoardAgent {
         allowed: false,
         reason: 'Permission check failed'
       };
+    }
+  }
+
+  /**
+   * Get user's name from ACL lists
+   */
+  async getUserName(req, address) {
+    try {
+      console.log('[message-board] getUserName called for:', address);
+
+      // Get all lists the user is a member of
+      const membershipEntries = await req.domainAcl.chain.contract.getListsForMember(address);
+      console.log('[message-board] User is member of lists:', membershipEntries.map(e => e.listName));
+
+      // Check each list for the user's ACL entry with a name
+      for (const entry of membershipEntries) {
+        console.log('[message-board] Checking list:', entry.listName);
+
+        // Get all ACL entries for this list
+        const aclEntries = await req.domainAcl.chain.contract.getACL(entry.listName);
+        console.log('[message-board] ACL entries for', entry.listName, ':', aclEntries.length);
+
+        // Find the entry for this address
+        const userEntry = aclEntries.find(e =>
+          e.addr.toLowerCase() === address.toLowerCase()
+        );
+        console.log('[message-board] Found user entry:', userEntry);
+
+        if (userEntry && userEntry.name && userEntry.name.trim() !== '') {
+          console.log('[message-board] Returning name:', userEntry.name);
+          return userEntry.name;
+        }
+      }
+
+      console.log('[message-board] No name found, returning null');
+      return null;
+    } catch (error) {
+      console.error('[message-board] Failed to get user name:', error);
+      return null;
     }
   }
 
@@ -826,41 +1099,6 @@ export default class MessageBoardAgent {
     return `data:image/svg+xml;base64,${sanitizedBase64}`;
   }
 
-  /**
-   * Get user's display name from white-list
-   */
-  async getUserName(req, address, listName) {
-    if (!this.epistery) {
-      return null;
-    }
-
-    try {
-      // Query the white-list agent API for members of this list
-      const url = `http://localhost:${process.env.PORT || 4080}/agent/epistery/white-list/list?list=${encodeURIComponent(listName)}`;
-      console.log(`[message-board] Fetching user name from: ${url}`);
-
-      const response = await fetch(url);
-
-      if (!response.ok) {
-        console.error(`[message-board] Failed to fetch members from ${listName}: ${response.status}`);
-        return null;
-      }
-
-      const data = await response.json();
-      console.log(`[message-board] Received ${data.count} members from ${listName}`);
-
-      // If there are multiple entries for the same address, prefer the one with a non-empty name
-      const members = data.list.filter(m => m && m.address && m.address.toLowerCase() === address.toLowerCase());
-      const member = members.find(m => m.name && m.name.trim() !== '') || members[0];
-
-      console.log(`[message-board] Found member for ${address}:`, member);
-
-      return member?.name || null;
-    } catch (error) {
-      console.error(`[message-board] Error fetching user name from white-list:`, error);
-      return null;
-    }
-  }
 
   /**
    * Verify same-domain authentication (user's wallet address from header)
@@ -937,15 +1175,75 @@ export default class MessageBoardAgent {
   /**
    * Read posts data from domain-specific file
    */
-  readData(domain) {
+  /**
+   * Read posts data - loads index and returns posts array with metadata
+   */
+  async readData(domain) {
+    const storage = await this.getStorage(domain);
+
+    try {
+      // Try to read the index file
+      const indexData = await storage.readFile('posts/index.json');
+      const index = JSON.parse(indexData.toString());
+
+      // Load all posts in parallel
+      const postPromises = index.posts.map(async (meta) => {
+        try {
+          const postData = await storage.readFile(`posts/${meta.id}.json`);
+          return JSON.parse(postData.toString());
+        } catch (error) {
+          console.error(`[message-board] Failed to load post ${meta.id}:`, error.message);
+          return null;
+        }
+      });
+
+      const posts = (await Promise.all(postPromises)).filter(p => p !== null);
+
+      return {
+        posts,
+        nextId: index.nextId || (Math.max(...posts.map(p => p.id), 0) + 1)
+      };
+    } catch (error) {
+      // No index exists yet - try legacy migration
+      return await this.migrateLegacyData(domain, storage);
+    }
+  }
+
+  /**
+   * Migrate legacy JSON file to new storage structure
+   */
+  async migrateLegacyData(domain, storage) {
     const config = new Config();
     config.setPath(domain);
 
     try {
-      const data = config.readFile('message-board-posts.json');
-      return JSON.parse(data.toString());
+      const legacyData = config.readFile('message-board-posts.json');
+      const data = JSON.parse(legacyData.toString());
+
+      console.log(`[message-board] Migrating ${data.posts.length} posts to storage...`);
+
+      // Write each post as separate file
+      await Promise.all(data.posts.map(post =>
+        storage.writeFile(`posts/${post.id}.json`, JSON.stringify(post, null, 2))
+      ));
+
+      // Write index
+      const index = {
+        nextId: data.nextId,
+        posts: data.posts.map(p => ({
+          id: p.id,
+          timestamp: p.timestamp,
+          author: p.author,
+          channel: p.channel || null
+        }))
+      };
+      await storage.writeFile('posts/index.json', JSON.stringify(index, null, 2));
+
+      console.log(`[message-board] Migration complete`);
+      return data;
     } catch (error) {
-      if (error.code === 'ENOENT') {
+      // No legacy data either - start fresh
+      if (error.code === 'ENOENT' || error.message.includes('not found')) {
         return { posts: [], nextId: 1 };
       }
       throw error;
@@ -953,14 +1251,42 @@ export default class MessageBoardAgent {
   }
 
   /**
-   * Write posts data to domain-specific file
+   * Write post data - stores individual post and updates index
    */
-  writeData(domain, data) {
-    const config = new Config();
-    config.setPath(domain);
-    // Ensure directory exists by saving config first
-    config.save();
-    config.writeFile('message-board-posts.json', JSON.stringify(data, null, 2));
+  async writeData(domain, data) {
+    const storage = await this.getStorage(domain);
+
+    // Build index from current posts
+    const index = {
+      nextId: data.nextId,
+      posts: data.posts.map(p => ({
+        id: p.id,
+        timestamp: p.timestamp,
+        author: p.author,
+        channel: p.channel || null
+      }))
+    };
+
+    // Write index
+    await storage.writeFile('posts/index.json', JSON.stringify(index, null, 2));
+
+    // Note: Individual posts are written via writePost()
+  }
+
+  /**
+   * Write a single post to storage
+   */
+  async writePost(domain, post) {
+    const storage = await this.getStorage(domain);
+    await storage.writeFile(`posts/${post.id}.json`, JSON.stringify(post, null, 2));
+  }
+
+  /**
+   * Delete a single post from storage
+   */
+  async deletePost(domain, postId) {
+    const storage = await this.getStorage(domain);
+    await storage.deleteFile(`posts/${postId}.json`);
   }
 
   /**

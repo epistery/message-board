@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Message Board - Chat</title>
+  <link rel="stylesheet" href="/style/static.css">
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    .chat-container {
+      display: flex;
+      flex-direction: column;
+      height: calc(100vh - 120px);
+      max-width: 100%;
+    }
+
+    .chat-header {
+      padding: var(--spacer) var(--spacer2);
+      border-bottom: 1px solid var(--page-border);
+      background: var(--bg-color);
+    }
+
+    .chat-header h1 {
+      font-size: 1.25rem;
+      margin: 0;
+      color: var(--text-color);
+    }
+
+    .chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: var(--spacer2);
+      display: flex;
+      flex-direction: column;
+      gap: var(--spacerhalf);
+    }
+
+    .message {
+      display: flex;
+      gap: var(--spacer);
+      padding: var(--spacerhalf) var(--spacer);
+      border-radius: 4px;
+      transition: background 0.1s;
+    }
+
+    .message:hover {
+      background: var(--bg-color-quiet-d);
+    }
+
+    .message-avatar {
+      width: 36px;
+      height: 36px;
+      border-radius: 4px;
+      flex-shrink: 0;
+    }
+
+    .message-content {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .message-header {
+      display: flex;
+      align-items: baseline;
+      gap: var(--spacerhalf);
+      margin-bottom: 2px;
+    }
+
+    .message-author {
+      font-weight: 600;
+      font-size: 15px;
+      color: var(--text-color);
+    }
+
+    .message-time {
+      font-size: 12px;
+      color: var(--text-color-quiet);
+    }
+
+    .message-text {
+      font-size: 15px;
+      line-height: 1.5;
+      color: var(--text-color);
+      word-wrap: break-word;
+    }
+
+    .message-text p {
+      margin: 0 0 0.5em 0;
+    }
+
+    .message-text p:last-child {
+      margin-bottom: 0;
+    }
+
+    .message-text a {
+      color: var(--action-color);
+      text-decoration: none;
+    }
+
+    .message-text a:hover {
+      text-decoration: underline;
+    }
+
+    .message-text strong {
+      font-weight: 600;
+    }
+
+    .message-text code {
+      background: var(--bg-color-d);
+      padding: 0.15em 0.4em;
+      border-radius: 3px;
+      font-size: 0.9em;
+    }
+
+    .message-text pre {
+      background: var(--bg-color-d);
+      padding: var(--spacer);
+      border-radius: 6px;
+      overflow-x: auto;
+      margin: 0.5em 0;
+    }
+
+    .message-text pre code {
+      background: none;
+      padding: 0;
+    }
+
+    .message-image {
+      max-width: 400px;
+      max-height: 300px;
+      border-radius: 4px;
+      margin-top: var(--spacerhalf);
+      cursor: pointer;
+    }
+
+    .message {
+      position: relative;
+    }
+
+    .message-actions {
+      position: absolute;
+      top: var(--spacerhalf);
+      right: var(--spacer);
+      gap: var(--spacerhalf);
+      font-size: 12px;
+      opacity: 0;
+      transition: opacity 0.2s;
+      display: flex;
+    }
+
+    .message:hover .message-actions {
+      opacity: 1;
+    }
+
+    .message-action-btn {
+      padding: 2px 8px;
+      background: transparent;
+      border: 1px solid var(--page-border);
+      border-radius: 3px;
+      font-size: 12px;
+      cursor: pointer;
+      color: var(--text-color-quiet);
+      transition: all 0.1s;
+    }
+
+    .message-action-btn:hover {
+      background: var(--bg-color-d);
+      color: var(--text-color);
+    }
+
+    .clickable-address {
+      cursor: pointer;
+      transition: color 0.2s;
+      font-family: 'Courier New', monospace;
+      font-size: 13px;
+      color: var(--text-color-quiet);
+    }
+
+    .clickable-address:hover {
+      color: var(--action-color);
+      text-decoration: underline;
+    }
+
+    .chat-input-container {
+      padding: var(--spacer2);
+      border-top: 1px solid var(--page-border);
+      background: var(--bg-color);
+    }
+
+    .chat-input-wrapper {
+      display: flex;
+      flex-direction: column;
+      gap: var(--spacerhalf);
+      border: 2px solid var(--page-border);
+      border-radius: 8px;
+      background: var(--bg-color);
+      transition: border-color 0.2s;
+    }
+
+    .chat-input-wrapper:focus-within {
+      border-color: var(--action-color);
+    }
+
+    .chat-input {
+      width: 100%;
+      padding: var(--spacer);
+      border: none;
+      background: transparent;
+      font-family: inherit;
+      font-size: 14px;
+      resize: none;
+      outline: none;
+      min-height: 44px;
+      max-height: 200px;
+    }
+
+    .chat-input-actions {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0 var(--spacer) var(--spacer) var(--spacer);
+    }
+
+    .chat-input-left {
+      display: flex;
+      gap: var(--spacerhalf);
+      align-items: center;
+    }
+
+    .image-upload-btn {
+      padding: 6px 10px;
+      background: transparent;
+      border: 1px solid var(--page-border);
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
+      transition: all 0.2s;
+    }
+
+    .image-upload-btn:hover {
+      background: var(--bg-color-d);
+    }
+
+    .image-upload-btn input {
+      display: none;
+    }
+
+    .image-preview-container {
+      padding: 0 var(--spacer) var(--spacerhalf) var(--spacer);
+    }
+
+    .image-preview {
+      max-width: 200px;
+      max-height: 150px;
+      border-radius: 4px;
+      border: 1px solid var(--page-border);
+    }
+
+    .btn-send {
+      padding: 6px 16px;
+      background: var(--action-color);
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn-send:hover {
+      background: var(--action-color-hilite);
+    }
+
+    .btn-send:disabled {
+      background: var(--neutral);
+      cursor: not-allowed;
+    }
+
+    .markdown-hint {
+      font-size: 11px;
+      color: var(--text-color-quiet);
+      font-family: monospace;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: var(--spacer3);
+      color: var(--text-color-quiet);
+    }
+
+    .empty-state-icon {
+      font-size: 48px;
+      margin-bottom: var(--spacer);
+    }
+
+    .error-message {
+      background: #f8d7da;
+      color: #721c24;
+      padding: var(--spacer);
+      border-radius: 6px;
+      margin: var(--spacer) var(--spacer2);
+      border: 1px solid #f5c6cb;
+    }
+
+    .sidebar-title {
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: var(--text-color-quiet);
+      margin-bottom: var(--spacer);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .sidebar-links {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+    }
+
+    .sidebar-link {
+      margin-bottom: var(--spacerhalf);
+    }
+
+    .sidebar-link a {
+      display: block;
+      padding: var(--spacerhalf) var(--spacer);
+      color: var(--text-color);
+      text-decoration: none;
+      border-radius: 4px;
+      font-size: 0.9em;
+      transition: all 0.2s;
+    }
+
+    .sidebar-link a:hover {
+      background: var(--bg-color-d);
+      color: var(--rust-mid);
+    }
+
+    .sidebar-link a.active {
+      background: var(--action-color);
+      color: white;
+      font-weight: 600;
+    }
+
+    .request-access-widget {
+      margin-bottom: var(--spacer);
+    }
+  </style>
+  <script src="/script/common.js"></script>
+</head>
+<body>
+<header>
+  <nav>
+    <a href="/?home" class="logo">
+      <img alt="logo" src="/image/epistery-logo-32.svg" class="logo-window">
+    </a>
+  </nav>
+</header>
+
+  <main class="console-layout">
+    <div class="console-main">
+      <div class="chat-container">
+        <div class="chat-header">
+          <h1># general</h1>
+        </div>
+
+        <div id="error-container"></div>
+
+        <div class="chat-messages" id="chat-messages">
+          <!-- Messages will be rendered here -->
+        </div>
+
+        <div class="chat-input-container" id="chat-input-container">
+          <div class="chat-input-wrapper">
+            <textarea
+              id="message-input"
+              class="chat-input"
+              placeholder="Message #general"
+              rows="1"
+            ></textarea>
+            <div id="image-preview-container" class="image-preview-container" style="display: none;">
+              <img id="image-preview" class="image-preview">
+            </div>
+            <div class="chat-input-actions">
+              <div class="chat-input-left">
+                <label class="image-upload-btn">
+                  <input type="file" id="image-input" accept="image/jpeg,image/jpg,image/png,image/gif,image/webp,image/svg+xml">
+                  <span>📷</span>
+                </label>
+                <span class="markdown-hint">**bold** *italic* `code`</span>
+              </div>
+              <button id="send-button" class="btn-send">Send</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="console-sidebar">
+      <div class="request-access-widget" data-widget="requestAccess" data-agent="@epistery/message-board" data-list="epistery::editor"></div>
+
+      <div class="sidebar-title">Channels</div>
+      <ul class="sidebar-links" id="channels-list">
+        <!-- Channels will be loaded here -->
+      </ul>
+
+      <div class="sidebar-title">Links</div>
+      <ul class="sidebar-links" id="sidebar-links">
+        <!-- Links will be loaded here -->
+      </ul>
+    </div>
+  </main>
+
+  <footer>
+    <div class="container">
+      <div class="footer-bottom">
+        <p>&copy; 2026 Rootz Corp. Powered by Epistery.</p>
+      </div>
+    </div>
+  </footer>
+
+  <script type="module" src="/script/widgets.mjs"></script>
+  <script type="module" src="/agent/epistery/message-board/client/chat-app.js"></script>
+  <script>
+    // Load sidebar links
+    async function loadSidebarLinks() {
+      try {
+        const response = await fetch('/agent/epistery/message-board/links');
+        if (response.ok) {
+          const links = await response.json();
+          const linksContainer = document.getElementById('sidebar-links');
+
+          if (links && links.length > 0) {
+            linksContainer.innerHTML = links.map(link => `
+              <li class="sidebar-link">
+                <a href="${escapeHtml(link.url)}" target="_blank" rel="noopener">
+                  ${escapeHtml(link.title)}
+                </a>
+              </li>
+            `).join('');
+          } else {
+            linksContainer.innerHTML = '<li style="padding: var(--spacer); color: var(--text-color-quiet); font-size: 0.875em;">No links yet</li>';
+          }
+        }
+      } catch (error) {
+        console.error('[chat] Failed to load sidebar links:', error);
+      }
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // Load links on page load
+    loadSidebarLinks();
+
+    // Auto-resize textarea
+    const textarea = document.getElementById('message-input');
+    if (textarea) {
+      textarea.addEventListener('input', function() {
+        this.style.height = 'auto';
+        this.style.height = Math.min(this.scrollHeight, 200) + 'px';
+      });
+    }
+  </script>
+</body>
+</html>

@@ -359,9 +359,40 @@
 
     <!-- Stats Panel -->
 
+    <!-- View Mode Selection -->
+    <section class="console-panel full-width">
+      <div class="panel-header">
+        <h2>View Mode</h2>
+      </div>
+
+      <div class="config-item">
+        <div>
+          <span class="config-label">Display Mode</span>
+          <p style="font-size: 0.75rem; color: var(--text-color-quiet); margin: 4px 0 0 0;">Choose between post board (Twitter-like) or chat mode (Slack-like)</p>
+        </div>
+        <div class="input-group">
+          <select id="view-mode" style="width: 150px;">
+            <option value="board">Post Board</option>
+            <option value="chat">Chat Mode</option>
+          </select>
+          <button class="btn btn-primary" onclick="updateViewMode()">Save</button>
+        </div>
+      </div>
+    </section>
+
     <!-- Access Control Lists (shared from epistery-host) -->
     <section class="console-panel full-width">
       <iframe src="/page/acl?agent=@epistery/message-board"></iframe>
+    </section>
+
+    <!-- Channels Panel -->
+    <section class="console-panel full-width">
+      <div class="panel-header">
+        <h2>Channels</h2>
+        <button class="btn btn-primary" onclick="showAddChannelModal()">Add Channel</button>
+      </div>
+
+      <div id="channels-list"></div>
     </section>
 
     <!-- Sidebar Links Panel -->
@@ -448,6 +479,35 @@
       </div>
     </div>
   </footer>
+
+  <!-- Add Channel Modal -->
+  <div id="add-channel-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Add Channel</h3>
+        <button class="close-btn" onclick="closeChannelModal()">&times;</button>
+      </div>
+
+      <form id="add-channel-form" onsubmit="addChannel(event)">
+        <div class="form-group">
+          <label for="channel-name">Channel Name</label>
+          <input type="text" id="channel-name" placeholder="general" required pattern="[a-z0-9\-]+" title="Lowercase letters, numbers, and hyphens only">
+          <p style="font-size: 0.75rem; color: var(--text-color-quiet); margin: 4px 0 0 0;">Lowercase letters, numbers, and hyphens only</p>
+        </div>
+
+        <div class="form-group">
+          <label for="channel-list">Access List (optional)</label>
+          <input type="text" id="channel-list" placeholder="message-board::readers">
+          <p style="font-size: 0.75rem; color: var(--text-color-quiet); margin: 4px 0 0 0;">Leave empty to use default access control. Otherwise specify an ACL list name.</p>
+        </div>
+
+        <div class="form-actions">
+          <button type="button" class="btn" onclick="closeChannelModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary">Add Channel</button>
+        </div>
+      </form>
+    </div>
+  </div>
 
   <!-- Add Link Modal -->
   <div id="add-link-modal" class="modal">
@@ -604,9 +664,54 @@
 
         // Load and display image settings
         await loadImageSettings();
+
+        // Load view mode
+        await loadViewMode();
       } catch (error) {
         console.error('[admin] Failed to load data:', error);
         showMessage('Failed to load admin data: ' + error.message, 'error');
+      }
+    }
+
+    // Load view mode setting
+    async function loadViewMode() {
+      try {
+        const response = await fetch('/agent/epistery/message-board/api/config/view-mode', {
+          credentials: 'include'
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          document.getElementById('view-mode').value = data.viewMode || 'board';
+        }
+      } catch (error) {
+        console.error('[admin] Failed to load view mode:', error);
+        // Default to board if load fails
+        document.getElementById('view-mode').value = 'board';
+      }
+    }
+
+    // Update view mode setting
+    async function updateViewMode() {
+      const viewMode = document.getElementById('view-mode').value;
+
+      try {
+        const response = await fetch('/agent/epistery/message-board/api/config/view-mode', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ viewMode })
+        });
+
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error || 'Failed to update view mode');
+        }
+
+        showMessage('View mode updated successfully. Refresh the board to see changes.', 'success');
+      } catch (error) {
+        console.error('[admin] Failed to update view mode:', error);
+        showMessage('Failed to update view mode: ' + error.message, 'error');
       }
     }
 
@@ -842,8 +947,132 @@
       return div.innerHTML;
     }
 
+    // Channels Management
+    async function loadChannels() {
+      try {
+        const response = await fetch('/agent/epistery/message-board/api/channels', { credentials: 'include' });
+        if (!response.ok) throw new Error('Failed to load channels');
+
+        const allChannels = await response.json();
+        console.log('[admin] Loaded channels:', allChannels);
+        console.log('[admin] Type of first channel:', typeof allChannels[0], 'keys:', Object.keys(allChannels[0] || {}));
+        const container = document.getElementById('channels-list');
+
+        // Filter out the "general" pseudo-channel from admin display
+        const channels = allChannels.filter(ch => !ch.isPseudo);
+        console.log('[admin] Filtered channels for display:', channels);
+        if (channels.length > 0) {
+          console.log('[admin] First filtered channel:', channels[0], 'name:', channels[0].name, 'keys:', Object.keys(channels[0]));
+        }
+
+        if (channels && channels.length > 0) {
+          container.innerHTML = `
+            <div style="padding: var(--spacer); background: var(--bg-color-quiet-d); border-radius: 6px; margin-bottom: var(--spacer); border: 1px solid var(--page-border);">
+              <strong>#general</strong> (Built-in)<br>
+              <span style="font-size: 0.875em; color: var(--text-color-quiet);">Displays all posts without a specific channel</span>
+            </div>
+            <table class="member-table">
+              <thead>
+                <tr>
+                  <th>Channel Name</th>
+                  <th>Access List</th>
+                  <th style="text-align: right;">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${channels.map(channel => {
+                  console.log('[admin] Rendering channel:', channel, 'name:', channel.name);
+                  return `
+                  <tr>
+                    <td><strong>#${escapeHtml(channel.name || 'MISSING')}</strong></td>
+                    <td class="mono">${channel.list ? escapeHtml(channel.list) : '<em style="color: var(--text-color-quiet);">Default access</em>'}</td>
+                    <td style="text-align: right;">
+                      <button class="btn btn-danger" onclick="deleteChannel('${escapeHtml(channel.name)}')">Delete</button>
+                    </td>
+                  </tr>
+                `;
+                }).join('')}
+              </tbody>
+            </table>
+          `;
+        } else {
+          container.innerHTML = `
+            <div style="padding: var(--spacer); background: var(--bg-color-quiet-d); border-radius: 6px; margin-bottom: var(--spacer); border: 1px solid var(--page-border);">
+              <strong>#general</strong> (Built-in)<br>
+              <span style="font-size: 0.875em; color: var(--text-color-quiet);">Displays all posts without a specific channel</span>
+            </div>
+            <div class="empty-state">No custom channels configured. Add a channel to get started.</div>
+          `;
+        }
+      } catch (error) {
+        console.error('Failed to load channels:', error);
+        showMessage('Failed to load channels: ' + error.message, 'error');
+      }
+    }
+
+    function showAddChannelModal() {
+      document.getElementById('add-channel-modal').classList.add('active');
+      document.getElementById('channel-name').focus();
+    }
+
+    function closeChannelModal() {
+      document.getElementById('add-channel-modal').classList.remove('active');
+      document.getElementById('add-channel-form').reset();
+    }
+
+    async function addChannel(event) {
+      event.preventDefault();
+
+      const name = document.getElementById('channel-name').value.trim();
+      const list = document.getElementById('channel-list').value.trim();
+
+      try {
+        const response = await fetch('/agent/epistery/message-board/api/channels', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ name, list: list || null })
+        });
+
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error || 'Failed to add channel');
+        }
+
+        showMessage('Channel added successfully', 'success');
+        closeChannelModal();
+        await loadChannels();
+      } catch (error) {
+        console.error('Failed to add channel:', error);
+        showMessage('Failed to add channel: ' + error.message, 'error');
+      }
+    }
+
+    async function deleteChannel(name) {
+      if (!confirm(`Delete channel #${name}? All posts in this channel will remain but will not be accessible.`)) return;
+
+      try {
+        const response = await fetch(`/agent/epistery/message-board/api/channels/${encodeURIComponent(name)}`, {
+          method: 'DELETE',
+          credentials: 'include'
+        });
+
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error || 'Failed to delete channel');
+        }
+
+        showMessage('Channel deleted', 'success');
+        await loadChannels();
+      } catch (error) {
+        console.error('Failed to delete channel:', error);
+        showMessage('Failed to delete channel: ' + error.message, 'error');
+      }
+    }
+
     // Initialize
     loadData();
+    loadChannels();
     loadLinks();
 
     // Close modal on ESC key
@@ -851,6 +1080,7 @@
       if (e.key === 'Escape') {
         closeModal();
         closeLinkModal();
+        closeChannelModal();
       }
     });
   </script>
