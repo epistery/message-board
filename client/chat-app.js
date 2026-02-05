@@ -18,6 +18,10 @@ async function init() {
   // Load channels
   await loadChannels();
 
+  // Handle hash-based channel selection
+  handleHashChange();
+  window.addEventListener('hashchange', handleHashChange);
+
   // Setup event listeners
   setupEventListeners();
 
@@ -85,9 +89,31 @@ function renderChannels() {
   }
 }
 
+// Handle hash change for channel selection
+function handleHashChange() {
+  const hash = window.location.hash.slice(1); // Remove #
+  const channelName = hash || 'general';
+
+  // Only select if it's a valid channel
+  const channelExists = channels.find(ch => ch.name === channelName);
+  if (channelExists || channelName === 'general') {
+    selectChannel(channelName);
+  }
+}
+
 // Select channel
 window.selectChannel = async function(channelName) {
   currentChannel = channelName;
+
+  // Update URL hash (no hash for general)
+  if (channelName === 'general') {
+    if (window.location.hash) {
+      history.pushState(null, '', window.location.pathname);
+    }
+  } else {
+    window.location.hash = channelName;
+  }
+
   renderChannels();
 
   // Reload posts for this channel

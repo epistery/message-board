@@ -6,6 +6,8 @@ let ws = null;
 let currentUser = null;
 let permissions = null; // Loaded from /api/permissions
 let markup = null; // Markdown renderer
+let channels = []; // Available channels
+let currentChannel = null; // Currently selected channel (null = general)
 
 // Initialize
 async function init() {
@@ -14,6 +16,13 @@ async function init() {
   // Initialize markdown renderer
   markup = new MarkUp();
   await markup.init();
+
+  // Load channels
+  await loadChannels();
+
+  // Handle hash-based channel selection
+  handleHashChange();
+  window.addEventListener('hashchange', handleHashChange);
 
   // Load posts
   await loadPosts();
@@ -98,6 +107,66 @@ async function checkAuthStatus() {
   }
 }
 
+// Load channels
+async function loadChannels() {
+  try {
+    const response = await fetch('/agent/epistery/message-board/api/channels');
+    if (!response.ok) throw new Error('Failed to load channels');
+
+    channels = await response.json();
+    console.log('[message-board] Loaded channels:', channels);
+
+    // Default to "general" channel if no channel selected
+    if (!currentChannel && channels.length > 0) {
+      currentChannel = 'general';
+    }
+
+    renderChannels();
+  } catch (error) {
+    console.error('[message-board] Failed to load channels:', error);
+  }
+}
+
+// Render channels in sidebar
+function renderChannels() {
+  const container = document.getElementById('channels-list');
+  if (!container) return;
+
+  if (channels.length === 0) {
+    container.innerHTML = '<li style="padding: var(--spacer); color: var(--text-color-quiet); font-size: 0.875em;">No channels</li>';
+    return;
+  }
+
+  container.innerHTML = channels.map(channel => `
+    <li class="sidebar-link">
+      <a href="#${channel.name === 'general' ? '' : channel.name}" class="${currentChannel === channel.name ? 'active' : ''}" onclick="return false;">
+        # ${escapeHtml(channel.name)}
+      </a>
+    </li>
+  `).join('');
+}
+
+// Handle hash change for channel selection
+function handleHashChange() {
+  const hash = window.location.hash.slice(1); // Remove #
+  const channelName = hash || 'general';
+
+  // Only select if it's a valid channel
+  const channelExists = channels.find(ch => ch.name === channelName);
+  if (channelExists || channelName === 'general') {
+    selectChannel(channelName);
+  }
+}
+
+// Select channel
+async function selectChannel(channelName) {
+  currentChannel = channelName;
+  renderChannels();
+
+  // Reload posts for this channel
+  await loadPosts();
+}
+
 // Load posts from API or localStorage
 async function loadPosts() {
   try {
@@ -113,8 +182,11 @@ async function loadPosts() {
       }
     }
 
-    // Then fetch fresh data from server
-    const response = await fetch('/agent/epistery/message-board/api/posts');
+    // Then fetch fresh data from server (filtered by channel)
+    const url = currentChannel && currentChannel !== 'general'
+      ? `/agent/epistery/message-board/api/posts?channel=${encodeURIComponent(currentChannel)}`
+      : '/agent/epistery/message-board/api/posts';
+    const response = await fetch(url);
     if (!response.ok) throw new Error('Failed to load posts');
 
     posts = await response.json();
@@ -643,7 +715,8 @@ async function createPost() {
   try {
     const body = {
       text,
-      image: imagePreview.style.display !== 'none' ? imagePreview.src : null
+      image: imagePreview.style.display !== 'none' ? imagePreview.src : null,
+      channel: currentChannel && currentChannel !== 'general' ? currentChannel : null
     };
 
     // Add wallet address header for same-domain authentication
@@ -678,20 +751,12 @@ async function createPost() {
       }
     }
 
-    // Create optimistic post to show immediately
-    const optimisticPost = {
-      id: Date.now(), // temporary ID
-      text,
-      image: imagePreview.style.display !== 'none' ? imagePreview.src : null,
-      author: currentUser.address,
-      authorName: currentUser.name,
-      timestamp: new Date().toISOString(),
-      comments: [],
-      pending: true // mark as pending confirmation
-    };
+    // Get the confirmed post from server response
+    const confirmedPost = await response.json();
 
-    // Add to posts array at the beginning
-    posts.unshift(optimisticPost);
+    // Add confirmed post to posts array at the beginning
+    posts.unshift(confirmedPost);
+    savePosts();
     renderPosts();
 
     // Clear form
@@ -699,9 +764,6 @@ async function createPost() {
     imagePreview.style.display = 'none';
     imagePreview.src = '';
     document.getElementById('image-input').value = '';
-
-    // Reload posts to get the confirmed version
-    setTimeout(() => loadPosts(), 2000);
   } catch (error) {
     console.error('[message-board] Post error:', error);
     showError(error.message);
