@@ -322,25 +322,33 @@ export default class MessageBoardAgent {
 
         // Filter channels based on user's access
         if (req.episteryClient && req.episteryClient.address) {
-          for (const channel of channels) {
-            if (!channel.list) {
-              // No ACL specified - check default access
-              const access = await req.domainAcl.checkAgentAccess(
-                '@epistery/message-board',
-                req.episteryClient.address,
-                req.hostname
-              );
-              if (access.level >= 1) { // Level 1 (reader) or higher
-                accessibleChannels.push(channel);
-              }
-            } else {
-              // Check specific list access
-              const isInList = await req.domainAcl.chain.contract.isInACL(
-                channel.list,
-                req.episteryClient.address
-              );
-              if (isInList) {
-                accessibleChannels.push(channel);
+          // Check user's access level to message-board
+          const access = await req.domainAcl.checkAgentAccess(
+            '@epistery/message-board',
+            req.episteryClient.address,
+            req.hostname
+          );
+
+          // Admins (level 3) see all channels
+          if (access.level >= 3) {
+            accessibleChannels.push(...channels);
+          } else {
+            // Non-admins see only channels they have access to
+            for (const channel of channels) {
+              if (!channel.list) {
+                // No ACL specified - use agent access level
+                if (access.level >= 1) { // Level 1 (reader) or higher
+                  accessibleChannels.push(channel);
+                }
+              } else {
+                // Check specific list access
+                const isInList = await req.domainAcl.chain.contract.isInACL(
+                  channel.list,
+                  req.episteryClient.address
+                );
+                if (isInList) {
+                  accessibleChannels.push(channel);
+                }
               }
             }
           }
