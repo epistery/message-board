@@ -335,9 +335,9 @@ export default class MessageBoardAgent {
               }
             } else {
               // Check specific list access
-              const isInList = await req.domainAcl.isInACL(
-                req.episteryClient.address,
-                channel.list
+              const isInList = await req.domainAcl.chain.contract.isInACL(
+                channel.list,
+                req.episteryClient.address
               );
               if (isInList) {
                 accessibleChannels.push(channel);
