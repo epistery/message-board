@@ -284,6 +284,21 @@ export class MessageBoardCommon {
       case 'new-post':
         if (!this.posts.find(p => p.id === message.post.id)) {
           this.posts.unshift(message.post);
+
+          // Fire notification if available and not from current user
+          if (window.episteryNotify && message.post.author !== this.currentUser?.name) {
+            const truncatedText = message.post.text.length > 80
+              ? message.post.text.substring(0, 80) + '...'
+              : message.post.text;
+            window.episteryNotify(
+              'New Post',
+              `${message.post.author}: ${truncatedText}`,
+              {
+                icon: '/image/favicon.png',
+                tag: 'post-' + message.post.id
+              }
+            );
+          }
         }
         this.savePosts();
         this.onPostsUpdated && this.onPostsUpdated();
@@ -294,6 +309,21 @@ export class MessageBoardCommon {
         if (post) {
           if (!post.comments.find(c => c.id === message.comment.id)) {
             post.comments.push(message.comment);
+
+            // Fire notification if available and not from current user
+            if (window.episteryNotify && message.comment.author !== this.currentUser?.name) {
+              const truncatedText = message.comment.text.length > 60
+                ? message.comment.text.substring(0, 60) + '...'
+                : message.comment.text;
+              window.episteryNotify(
+                'New Comment',
+                `${message.comment.author} replied: ${truncatedText}`,
+                {
+                  icon: '/image/favicon.png',
+                  tag: 'comment-' + message.comment.id
+                }
+              );
+            }
           }
           this.savePosts();
           this.onPostsUpdated && this.onPostsUpdated();
