@@ -31,25 +31,10 @@ export class MessageBoardCommon {
     this.connectWebSocket();
   }
 
-  // Ensure wallet exists, auto-creating if necessary
+  // Session is established by common.js on every page load
   async ensureWallet() {
-    try {
-      const data = localStorage.getItem('epistery');
-      if (data) {
-        const parsed = JSON.parse(data);
-        if (parsed.wallets && parsed.wallets.length > 0) {
-          console.log('[message-board] Wallet already exists');
-          return;
-        }
-      }
-
-      console.log('[message-board] No wallet found, creating one...');
-      const WitnessModule = await import('/lib/witness.js');
-      const Witness = WitnessModule.default;
-      window.epistery = await Witness.connect();
-      console.log('[message-board] Wallet created successfully:', window.epistery.wallet.address);
-    } catch (error) {
-      console.log('[message-board] Could not auto-create wallet:', error.message);
+    if (!window.epistery) {
+      console.warn('[message-board] No epistery session, common.js may not have loaded');
     }
   }
 
