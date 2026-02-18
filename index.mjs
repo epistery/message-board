@@ -524,18 +524,24 @@ export default class MessageBoardAgent {
       }
     });
 
-    // Get all posts (public, read-only), optionally filtered by channel
+    // Get posts filtered by channel access — server enforces ACL, not client
     router.get('/api/posts', async (req, res) => {
       try {
         const data = await this.readData(req.domain);
         const { channel } = req.query;
 
-        let posts = data.posts;
+        // Determine which channels this user may see
+        const accessible = await this.getAccessibleChannelNames(req);
 
-        // Filter by channel if specified
+        // Strip posts from channels the user cannot access
+        let posts = data.posts.filter(post => accessible.has(post.channel || 'general'));
+
+        // Further narrow by requested channel
         if (channel) {
+          if (!accessible.has(channel)) {
+            return res.status(403).json({ error: 'Access denied' });
+          }
           if (channel === 'general') {
-            // "general" pseudo-channel shows posts with no channel
             posts = posts.filter(post => !post.channel || post.channel === 'general');
           } else {
             posts = posts.filter(post => post.channel === channel);
@@ -1025,6 +1031,38 @@ export default class MessageBoardAgent {
   /**
    * Check if user has admin permission
    */
+  // Returns a Set of channel names accessible to the requesting user.
+  // Always includes 'general'. Unauthenticated users only see channels without an ACL.
+  async getAccessibleChannelNames(req) {
+    let channels = req.boardConfig.data.messageBoard.channels || [];
+    channels = channels.map(ch => typeof ch === 'string' ? JSON.parse(ch) : ch).filter(Boolean);
+
+    const accessible = new Set(['general']);
+
+    if (req.episteryClient && req.episteryClient.address) {
+      const access = await req.domainAcl.checkAgentAccess(
+        '@epistery/message-board', req.episteryClient.address, req.hostname
+      );
+      if (access.level >= 3) {
+        channels.forEach(ch => accessible.add(ch.name));
+      } else {
+        for (const ch of channels) {
+          if (!ch.list) {
+            if (access.level >= 1) accessible.add(ch.name);
+          } else {
+            const isInList = await req.domainAcl.chain.contract.isInACL(ch.list, req.episteryClient.address);
+            if (isInList) accessible.add(ch.name);
+          }
+        }
+      }
+    } else {
+      // Unauthenticated: only channels with no ACL
+      channels.filter(ch => !ch.list).forEach(ch => accessible.add(ch.name));
+    }
+
+    return accessible;
+  }
+
   async checkAdminPermission(req) {
     if (!req.episteryClient) {
       return { allowed: false, reason: 'Authentication required' };

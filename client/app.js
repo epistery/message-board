@@ -1,5 +1,9 @@
 // Message Board Client Application
 import MarkUp from './MarkUp.mjs';
+import MessageBoardCommon from './message-board-common.mjs';
+
+// Shared utility instance (for getTimeAgo, escapeHtml, generateAvatar, processImage, copyAddress)
+const mb = new MessageBoardCommon();
 
 let posts = [];
 let ws = null;
@@ -11,8 +15,6 @@ let currentChannel = null; // Currently selected channel (null = general)
 
 // Initialize
 async function init() {
-  console.log('[message-board] Initializing...');
-
   // Initialize markdown renderer
   markup = new MarkUp();
   await markup.init();
@@ -38,8 +40,6 @@ async function init() {
 
   // Check authentication status
   await checkAuthStatus();
-
-  console.log('[message-board] Ready');
 }
 
 // Ensure wallet exists, auto-creating if necessary
@@ -50,19 +50,15 @@ async function ensureWallet() {
     if (data) {
       const parsed = JSON.parse(data);
       if (parsed.wallets && parsed.wallets.length > 0) {
-        console.log('[message-board] Wallet already exists');
         return;
       }
     }
 
     // No wallet exists - auto-create one silently using Witness
-    console.log('[message-board] No wallet found, creating one...');
     const WitnessModule = await import('/lib/witness.js');
     const Witness = WitnessModule.default;
     window.epistery = await Witness.connect();
-    console.log('[message-board] Wallet created successfully:', window.epistery.wallet.address);
   } catch (error) {
-    console.log('[message-board] Could not auto-create wallet:', error.message);
     // Not critical - user can still view posts
   }
 }
@@ -77,11 +73,9 @@ async function checkAuthStatus() {
     }
 
     const accessData = await response.json();
-    console.log('[message-board] Access check:', accessData);
 
     if (accessData.address) {
       currentUser = { address: accessData.address };
-      console.log('[message-board] Authenticated as:', accessData.address);
 
       permissions = {
         address: accessData.address,
@@ -114,7 +108,6 @@ async function loadChannels() {
     if (!response.ok) throw new Error('Failed to load channels');
 
     channels = await response.json();
-    console.log('[message-board] Loaded channels:', channels);
 
     // Default to "general" channel if no channel selected
     if (!currentChannel && channels.length > 0) {
@@ -140,7 +133,7 @@ function renderChannels() {
   container.innerHTML = channels.map(channel => `
     <li class="sidebar-link">
       <a href="#${channel.name === 'general' ? '' : channel.name}" class="${currentChannel === channel.name ? 'active' : ''}" onclick="return false;">
-        # ${escapeHtml(channel.name)}
+        # ${mb.escapeHtml(channel.name)}
       </a>
     </li>
   `).join('');
@@ -176,7 +169,6 @@ async function loadPosts() {
       try {
         posts = JSON.parse(cachedPosts);
         renderPosts();
-        console.log('[message-board] Loaded posts from localStorage cache');
       } catch (e) {
         console.error('[message-board] Failed to parse cached posts:', e);
       }
@@ -216,7 +208,6 @@ function savePosts() {
       image: null
     }));
     localStorage.setItem('message-board-posts', JSON.stringify(postsToCache));
-    console.log(`[message-board] Saved ${postsToCache.length} posts to localStorage`);
   } catch (error) {
     if (error.name === 'QuotaExceededError') {
       console.warn('[message-board] localStorage quota exceeded, clearing cache');
@@ -251,9 +242,9 @@ function renderPosts() {
 // Render single post
 function renderPost(post) {
   const date = new Date(post.timestamp);
-  const timeAgo = getTimeAgo(date);
+  const timeAgo = mb.getTimeAgo(date);
   const shortAddress = post.author.substring(0, 8) + '...' + post.author.substring(post.author.length - 6);
-  const avatar = generateAvatar(post.author, 40);
+  const avatar = mb.generateAvatar(post.author, 40);
 
   const commentsHtml = post.comments && post.comments.length > 0
     ? `
@@ -272,7 +263,7 @@ function renderPost(post) {
 
   // Format: "Name (0xShort...Address)" or just "(0xShort...Address)" if no name
   const authorDisplay = post.authorName
-    ? `${escapeHtml(post.authorName)} <span class="clickable-address" onclick="copyAddress('${post.author}')" title="Click to copy full address">(${shortAddress})</span>`
+    ? `${mb.escapeHtml(post.authorName)} <span class="clickable-address" onclick="copyAddress('${post.author}')" title="Click to copy full address">(${shortAddress})</span>`
     : `<span class="clickable-address" onclick="copyAddress('${post.author}')" title="Click to copy full address">${shortAddress}</span>`;
 
   return `
@@ -286,7 +277,7 @@ function renderPost(post) {
           </div>
         </div>
       </div>
-      <div class="post-text">${markup ? markup.render(post.text) : escapeHtml(post.text)}</div>
+      <div class="post-text">${markup ? markup.render(post.text) : mb.escapeHtml(post.text)}</div>
       ${imageHtml}
       <div class="post-actions">
         <button class="post-action-btn" onclick="showCommentForm(${post.id})">💬 Comment</button>
@@ -305,13 +296,13 @@ function renderPost(post) {
 // Render comment
 function renderComment(comment) {
   const date = new Date(comment.timestamp);
-  const timeAgo = getTimeAgo(date);
+  const timeAgo = mb.getTimeAgo(date);
   const shortAddress = comment.author.substring(0, 8) + '...' + comment.author.substring(comment.author.length - 6);
-  const avatar = generateAvatar(comment.author, 32);
+  const avatar = mb.generateAvatar(comment.author, 32);
 
   // Format: "Name (0xShort...Address)" or just "(0xShort...Address)" if no name
   const authorDisplay = comment.authorName
-    ? `${escapeHtml(comment.authorName)} <span class="clickable-address" onclick="copyAddress('${comment.author}')" title="Click to copy full address">(${shortAddress})</span>`
+    ? `${mb.escapeHtml(comment.authorName)} <span class="clickable-address" onclick="copyAddress('${comment.author}')" title="Click to copy full address">(${shortAddress})</span>`
     : `<span class="clickable-address" onclick="copyAddress('${comment.author}')" title="Click to copy full address">${shortAddress}</span>`;
 
   return `
@@ -323,7 +314,7 @@ function renderComment(comment) {
             <span class="comment-author">${authorDisplay}</span>
             <span class="comment-time">${timeAgo}</span>
           </div>
-          <div class="comment-text">${markup ? markup.render(comment.text) : escapeHtml(comment.text)}</div>
+          <div class="comment-text">${markup ? markup.render(comment.text) : mb.escapeHtml(comment.text)}</div>
         </div>
       </div>
     </div>
@@ -331,35 +322,7 @@ function renderComment(comment) {
 }
 
 // Copy address to clipboard
-window.copyAddress = async function(address) {
-  try {
-    await navigator.clipboard.writeText(address);
-
-    // Show brief confirmation
-    const notification = document.createElement('div');
-    notification.style.cssText = `
-      position: fixed;
-      top: 20px;
-      right: 20px;
-      background: #155724;
-      color: white;
-      padding: 12px 20px;
-      border-radius: 6px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-      z-index: 10000;
-      animation: slideIn 0.3s ease;
-    `;
-    notification.textContent = 'Address copied to clipboard!';
-    document.body.appendChild(notification);
-
-    setTimeout(() => {
-      notification.remove();
-    }, 2000);
-  } catch (error) {
-    console.error('[message-board] Failed to copy address:', error);
-    alert('Failed to copy address');
-  }
-};
+window.copyAddress = (address) => mb.copyAddress(address);
 
 // Show comment form
 window.showCommentForm = function(postId) {
@@ -458,7 +421,7 @@ window.editPost = function(postId) {
 
   // Replace post text with textarea
   postTextDiv.innerHTML = `
-    <textarea id="edit-textarea-${postId}" class="edit-textarea" rows="4">${escapeHtml(post.text)}</textarea>
+    <textarea id="edit-textarea-${postId}" class="edit-textarea" rows="4">${mb.escapeHtml(post.text)}</textarea>
     <div class="markdown-hint" style="margin-top: 6px;">
       Markdown: **bold** *italic* [link](url) \`code\` - list
     </div>
@@ -564,7 +527,7 @@ function setupEventListeners() {
 
     try {
       // Validate and process image
-      const processedImage = await processImage(file);
+      const processedImage = await mb.processImage(file);
       imagePreview.src = processedImage;
       imagePreview.style.display = 'block';
     } catch (error) {
@@ -573,130 +536,6 @@ function setupEventListeners() {
       imageInput.value = ''; // Clear the input
       imagePreview.style.display = 'none';
     }
-  });
-}
-
-// Process and normalize uploaded images
-async function processImage(file) {
-  // Fetch current image settings from server
-  let settings = {
-    maxUploadSize: 10,
-    maxProcessedSize: 3,
-    maxWidth: 1024,
-    jpegQuality: 85,
-    allowSvg: true
-  };
-
-  try {
-    const response = await fetch('/agent/epistery/message-board/api/settings/image');
-    if (response.ok) {
-      settings = await response.json();
-    }
-  } catch (error) {
-    console.warn('[message-board] Failed to fetch image settings, using defaults');
-  }
-
-  // 1. Validate file type
-  const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
-  if (settings.allowSvg) {
-    validTypes.push('image/svg+xml');
-  }
-
-  if (!validTypes.includes(file.type)) {
-    throw new Error('Invalid file type. Please upload a JPEG, PNG, GIF, WebP' + (settings.allowSvg ? ', or SVG' : '') + ' image.');
-  }
-
-  // 2. Check file size
-  const maxSize = settings.maxUploadSize * 1024 * 1024;
-  if (file.size > maxSize) {
-    throw new Error(`File too large. Maximum size is ${settings.maxUploadSize}MB.`);
-  }
-
-  // 3. Handle SVG separately (no processing needed, just validate)
-  if (file.type === 'image/svg+xml') {
-    return await processSvgFile(file);
-  }
-
-  // 4. Load image
-  const img = await loadImage(file);
-
-  // 5. Resize if needed (use configured max width, maintain aspect ratio)
-  const maxWidth = settings.maxWidth;
-  let { width, height } = img;
-
-  if (width > maxWidth) {
-    const aspectRatio = height / width;
-    width = maxWidth;
-    height = Math.round(maxWidth * aspectRatio);
-  }
-
-  // 6. Draw to canvas (this strips EXIF data and normalizes format)
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext('2d');
-
-  // Use white background for transparency (in case of PNG/GIF with transparency)
-  ctx.fillStyle = '#FFFFFF';
-  ctx.fillRect(0, 0, width, height);
-
-  // Draw image
-  ctx.drawImage(img, 0, 0, width, height);
-
-  // 7. Convert to JPEG with configured quality
-  const quality = settings.jpegQuality / 100;
-  const dataUrl = canvas.toDataURL('image/jpeg', quality);
-
-  // 8. Validate output size (if still too large, reduce quality)
-  const sizeInBytes = Math.round((dataUrl.length * 3) / 4);
-  const maxProcessedSize = settings.maxProcessedSize * 1024 * 1024;
-  if (sizeInBytes > maxProcessedSize) {
-    // Reduce quality by 15%
-    const reducedQuality = Math.max(0.5, quality - 0.15);
-    return canvas.toDataURL('image/jpeg', reducedQuality);
-  }
-
-  return dataUrl;
-}
-
-// Process SVG file
-async function processSvgFile(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const svgContent = e.target.result;
-
-        // Basic client-side validation
-        if (!svgContent.trim().startsWith('<svg')) {
-          reject(new Error('Invalid SVG file'));
-          return;
-        }
-
-        // Convert to data URL
-        const base64 = btoa(svgContent);
-        resolve(`data:image/svg+xml;base64,${base64}`);
-      } catch (error) {
-        reject(new Error('Failed to process SVG file'));
-      }
-    };
-    reader.onerror = () => reject(new Error('Failed to read SVG file'));
-    reader.readAsText(file);
-  });
-}
-
-// Helper: Load image from file
-function loadImage(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const img = new Image();
-      img.onload = () => resolve(img);
-      img.onerror = () => reject(new Error('Failed to load image'));
-      img.src = e.target.result;
-    };
-    reader.onerror = () => reject(new Error('Failed to read file'));
-    reader.readAsDataURL(file);
   });
 }
 
@@ -780,9 +619,7 @@ function connectWebSocket() {
 
   ws = new WebSocket(wsUrl);
 
-  ws.onopen = () => {
-    console.log('[message-board] WebSocket connected');
-  };
+  ws.onopen = () => {};
 
   ws.onmessage = (event) => {
     const message = JSON.parse(event.data);
@@ -790,7 +627,6 @@ function connectWebSocket() {
   };
 
   ws.onclose = () => {
-    console.log('[message-board] WebSocket disconnected, reconnecting...');
     setTimeout(connectWebSocket, 5000);
   };
 
@@ -801,8 +637,6 @@ function connectWebSocket() {
 
 // Handle WebSocket messages
 function handleWebSocketMessage(message) {
-  console.log('[message-board] WebSocket message:', message);
-
   switch (message.type) {
     case 'new-post':
       // Check if this post already exists (avoid duplicates)
@@ -856,86 +690,6 @@ function showError(message) {
   }, 5000);
 }
 
-// Utility: Get time ago string
-function getTimeAgo(date) {
-  const seconds = Math.floor((new Date() - date) / 1000);
-
-  const intervals = {
-    year: 31536000,
-    month: 2592000,
-    week: 604800,
-    day: 86400,
-    hour: 3600,
-    minute: 60
-  };
-
-  for (const [unit, secondsInUnit] of Object.entries(intervals)) {
-    const interval = Math.floor(seconds / secondsInUnit);
-    if (interval >= 1) {
-      return `${interval} ${unit}${interval === 1 ? '' : 's'} ago`;
-    }
-  }
-
-  return 'just now';
-}
-
-// Utility: Escape HTML
-function escapeHtml(text) {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
-}
-
-// Generate avatar from address (deterministic)
-function generateAvatar(address, size = 40) {
-  // Create a deterministic color palette from the address
-  const hash = address.toLowerCase();
-  const seed = parseInt(hash.slice(2, 10), 16);
-
-  // Generate colors from the hash
-  const hue1 = (seed % 360);
-  const hue2 = ((seed * 7) % 360);
-  const saturation = 65 + ((seed % 20));
-  const lightness = 45 + ((seed % 15));
-
-  const color1 = `hsl(${hue1}, ${saturation}%, ${lightness}%)`;
-  const color2 = `hsl(${hue2}, ${saturation}%, ${lightness + 10}%)`;
-
-  // Create a simple geometric pattern
-  const pattern = (seed % 4); // 4 different pattern types
-
-  let svg = '';
-  switch(pattern) {
-    case 0: // Diagonal stripes
-      svg = `<svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
-        <rect width="${size}" height="${size}" fill="${color1}"/>
-        <path d="M0,0 L${size},${size} M${size/2},${-size/2} L${size*1.5},${size/2} M${-size/2},${size/2} L${size/2},${size*1.5}" stroke="${color2}" stroke-width="${size/4}"/>
-      </svg>`;
-      break;
-    case 1: // Circles
-      svg = `<svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
-        <rect width="${size}" height="${size}" fill="${color1}"/>
-        <circle cx="${size/2}" cy="${size/2}" r="${size/3}" fill="${color2}"/>
-        <circle cx="${size/2}" cy="${size/2}" r="${size/6}" fill="${color1}"/>
-      </svg>`;
-      break;
-    case 2: // Triangles
-      svg = `<svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
-        <rect width="${size}" height="${size}" fill="${color1}"/>
-        <polygon points="${size/2},${size/6} ${size*5/6},${size*5/6} ${size/6},${size*5/6}" fill="${color2}"/>
-      </svg>`;
-      break;
-    case 3: // Squares
-      svg = `<svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
-        <rect width="${size}" height="${size}" fill="${color1}"/>
-        <rect x="${size/4}" y="${size/4}" width="${size/2}" height="${size/2}" fill="${color2}" transform="rotate(45 ${size/2} ${size/2})"/>
-      </svg>`;
-      break;
-  }
-
-  return 'data:image/svg+xml;base64,' + btoa(svg);
-}
-
 // Show request access dialog
 function showRequestAccessDialog(address, reason) {
   const container = document.getElementById('error-container');
@@ -946,7 +700,7 @@ function showRequestAccessDialog(address, reason) {
     <div style="margin-bottom: 12px;">
       <strong>⚠️ Access Required</strong>
     </div>
-    <p style="margin: 10px 0;">${escapeHtml(reason)}</p>
+    <p style="margin: 10px 0;">${mb.escapeHtml(reason)}</p>
     <p style="margin: 10px 0; font-size: 14px; opacity: 0.9;">
       Your address: <code>${address.substring(0, 8)}...${address.substring(address.length - 6)}</code>
     </p>
@@ -985,14 +739,6 @@ function showRequestAccessDialog(address, reason) {
   });
 }
 
-// (checkPostingPermission removed - now using /api/permissions instead)
-
-// Show guest access request form (deprecated - widget handles this now)
-function showGuestAccessRequest() {
-  // No-op: auto-wallet creation means no guests, requestAccess widget handles access requests
-  hidePostForm();
-}
-
 // UI State Management
 function hidePostForm() {
   const container = document.getElementById('create-post');
@@ -1000,46 +746,6 @@ function hidePostForm() {
     container.style.display = 'none';
   }
 }
-
-function showPostForm() {
-  const container = document.getElementById('create-post');
-  if (container) {
-    container.style.display = 'block';
-  }
-}
-
-// Widget handles sidebar access box display
-function showSidebarAccessBox() {
-  // No-op: requestAccess widget handles this
-}
-
-function hideSidebarAccessBox() {
-  // No-op: requestAccess widget handles this
-}
-
-// Show welcome state for users without posting permission
-function showWelcomeBox(address) {
-  hidePostForm();
-  // requestAccess widget handles access box display
-}
-
-// Widget handles request access form - these functions kept for backwards compatibility
-window.showRequestAccessForm = function() {
-  // No-op: requestAccess widget handles this now
-};
-
-window.cancelAccessRequest = function() {
-  // No-op: requestAccess widget handles this now
-};
-
-window.submitAccessRequest = async function() {
-  // No-op: requestAccess widget handles this now
-};
-
-// Submit guest access request (deprecated - widget handles this now)
-window.submitGuestAccessRequest = async function() {
-  // No-op: requestAccess widget handles this now
-};
 
 async function requestAccess(address, customMessage, customName) {
   const listName = 'epistery::editor';

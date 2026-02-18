@@ -8,8 +8,6 @@ let channels = [];
 
 // Initialize
 async function init() {
-  console.log('[chat] Initializing...');
-
   await mb.init();
 
   // Set up callback for post updates
@@ -33,8 +31,6 @@ async function init() {
   if (!mb.permissions || !mb.permissions.edit) {
     hideInput();
   }
-
-  console.log('[chat] Ready');
 }
 
 // Load channels
@@ -43,7 +39,6 @@ async function loadChannels() {
     const response = await fetch('/agent/epistery/message-board/api/channels');
     if (response.ok) {
       channels = await response.json();
-      console.log('[chat] Loaded channels:', channels);
 
       // Default to "general" channel if no channel selected
       if (!currentChannel && channels.length > 0) {

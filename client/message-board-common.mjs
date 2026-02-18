@@ -12,14 +12,9 @@ export class MessageBoardCommon {
   }
 
   async init() {
-    console.log('[message-board] Initializing common...');
-
     // Initialize markdown renderer
     this.markup = new MarkUp();
     await this.markup.init();
-
-    // Ensure wallet exists
-    await this.ensureWallet();
 
     // Check authentication
     await this.checkAuthStatus();
@@ -31,13 +26,6 @@ export class MessageBoardCommon {
     this.connectWebSocket();
   }
 
-  // Session is established by common.js on every page load
-  async ensureWallet() {
-    if (!window.epistery) {
-      console.warn('[message-board] No epistery session, common.js may not have loaded');
-    }
-  }
-
   // Check authentication and update UI
   async checkAuthStatus() {
     try {
@@ -47,11 +35,9 @@ export class MessageBoardCommon {
       }
 
       const accessData = await response.json();
-      console.log('[message-board] Access check:', accessData);
 
       if (accessData.address) {
         this.currentUser = { address: accessData.address };
-        console.log('[message-board] Authenticated as:', accessData.address);
 
         this.permissions = {
           address: accessData.address,
@@ -78,7 +64,6 @@ export class MessageBoardCommon {
       if (cachedPosts) {
         try {
           this.posts = JSON.parse(cachedPosts);
-          console.log('[message-board] Loaded posts from localStorage cache');
         } catch (e) {
           console.error('[message-board] Failed to parse cached posts:', e);
         }
@@ -115,7 +100,6 @@ export class MessageBoardCommon {
         image: null
       }));
       localStorage.setItem('message-board-posts', JSON.stringify(postsToCache));
-      console.log(`[message-board] Saved ${postsToCache.length} posts to localStorage`);
     } catch (error) {
       if (error.name === 'QuotaExceededError') {
         console.warn('[message-board] localStorage quota exceeded, clearing cache');
@@ -242,9 +226,7 @@ export class MessageBoardCommon {
 
     this.ws = new WebSocket(wsUrl);
 
-    this.ws.onopen = () => {
-      console.log('[message-board] WebSocket connected');
-    };
+    this.ws.onopen = () => {};
 
     this.ws.onmessage = (event) => {
       const message = JSON.parse(event.data);
@@ -252,7 +234,6 @@ export class MessageBoardCommon {
     };
 
     this.ws.onclose = () => {
-      console.log('[message-board] WebSocket disconnected, reconnecting...');
       setTimeout(() => this.connectWebSocket(), 5000);
     };
 
@@ -263,8 +244,6 @@ export class MessageBoardCommon {
 
   // Handle WebSocket messages
   handleWebSocketMessage(message) {
-    console.log('[message-board] WebSocket message:', message);
-
     switch (message.type) {
       case 'new-post':
         if (!this.posts.find(p => p.id === message.post.id)) {
