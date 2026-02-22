@@ -340,11 +340,7 @@ window.addComment = async function(postId) {
   if (!text) return;
 
   try {
-    // Add wallet address header for same-domain authentication
     const headers = { 'Content-Type': 'application/json' };
-    if (currentUser && currentUser.address) {
-      headers['X-Wallet-Address'] = currentUser.address;
-    }
 
     const response = await fetch(`/agent/epistery/message-board/api/posts/${postId}/comments`, {
       method: 'POST',
@@ -376,15 +372,8 @@ window.deletePost = async function(postId) {
   if (!confirm('Delete this post?')) return;
 
   try {
-    // Add wallet address header for same-domain authentication
-    const headers = {};
-    if (currentUser && currentUser.address) {
-      headers['X-Wallet-Address'] = currentUser.address;
-    }
-
     const response = await fetch(`/agent/epistery/message-board/api/posts/${postId}`, {
       method: 'DELETE',
-      headers,
       credentials: 'include'
     });
 
@@ -454,9 +443,6 @@ window.saveEdit = async function(postId) {
 
   try {
     const headers = { 'Content-Type': 'application/json' };
-    if (currentUser && currentUser.address) {
-      headers['X-Wallet-Address'] = currentUser.address;
-    }
 
     const response = await fetch(`/agent/epistery/message-board/api/posts/${postId}`, {
       method: 'PATCH',
@@ -558,11 +544,7 @@ async function createPost() {
       channel: currentChannel && currentChannel !== 'general' ? currentChannel : null
     };
 
-    // Add wallet address header for same-domain authentication
     const headers = { 'Content-Type': 'application/json' };
-    if (currentUser && currentUser.address) {
-      headers['X-Wallet-Address'] = currentUser.address;
-    }
 
     const response = await fetch('/agent/epistery/message-board/api/posts', {
       method: 'POST',

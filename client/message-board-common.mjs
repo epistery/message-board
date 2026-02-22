@@ -122,9 +122,6 @@ export class MessageBoardCommon {
       };
 
       const headers = { 'Content-Type': 'application/json' };
-      if (this.currentUser && this.currentUser.address) {
-        headers['X-Wallet-Address'] = this.currentUser.address;
-      }
 
       const response = await fetch('/agent/epistery/message-board/api/posts', {
         method: 'POST',
@@ -159,14 +156,8 @@ export class MessageBoardCommon {
   // Delete post
   async deletePost(postId) {
     try {
-      const headers = {};
-      if (this.currentUser && this.currentUser.address) {
-        headers['X-Wallet-Address'] = this.currentUser.address;
-      }
-
       const response = await fetch(`/agent/epistery/message-board/api/posts/${postId}`, {
         method: 'DELETE',
-        headers,
         credentials: 'include'
       });
 
@@ -191,9 +182,6 @@ export class MessageBoardCommon {
   async addComment(postId, text) {
     try {
       const headers = { 'Content-Type': 'application/json' };
-      if (this.currentUser && this.currentUser.address) {
-        headers['X-Wallet-Address'] = this.currentUser.address;
-      }
 
       const response = await fetch(`/agent/epistery/message-board/api/posts/${postId}/comments`, {
         method: 'POST',

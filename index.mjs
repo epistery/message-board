@@ -1146,47 +1146,6 @@ export default class MessageBoardAgent {
   }
 
 
-  /**
-   * Verify same-domain authentication (user's wallet address from header)
-   * For same-domain scenarios, we trust the address if user is domain admin
-   */
-  async verifySameDomainAuth(req) {
-    try {
-      console.log('[message-board] verifySameDomainAuth - all headers:', req.headers);
-      const address = req.headers['x-wallet-address'];
-
-      if (!address) {
-        console.log('[message-board] verifySameDomainAuth - no wallet address header found');
-        return { valid: false, error: 'No wallet address provided' };
-      }
-
-      console.log('[message-board] verifySameDomainAuth - checking address:', address);
-
-      // Verify this address is on domain admin ACL
-      // Uses DomainAgent contract directly with isInACL()
-      try {
-        const isGlobalAdmin = await this.isListedCaseInsensitive(address, 'epistery::admin', req.domain);
-        if (isGlobalAdmin) {
-          console.log('[message-board] Same-domain auth successful for global admin');
-          return { valid: true, address, isGlobalAdmin: true, domain: req.domain };
-        }
-
-        const isDomainAdmin = await this.isListedCaseInsensitive(address, `${req.domain}::admin`, req.domain);
-        if (isDomainAdmin) {
-          console.log('[message-board] Same-domain auth successful for domain admin');
-          return { valid: true, address, isDomainAdmin: true, domain: req.domain };
-        }
-      } catch (error) {
-        console.error('[message-board] ACL check failed:', error);
-      }
-
-      console.log('[message-board] Same-domain auth failed - not an admin');
-      return { valid: false, error: 'Not authorized' };
-    } catch (error) {
-      console.error('[message-board] Same-domain auth error:', error);
-      return { valid: false, error: error.message };
-    }
-  }
 
   /**
    * Check if address is in ACL using DomainAgent contract
