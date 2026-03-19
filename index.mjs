@@ -203,55 +203,11 @@ export default class MessageBoardAgent {
       res.sendFile(adminPath);
     });
 
-    // Serve board page (main UI) - routes to appropriate view based on config
+    // Serve board page (main UI) - routes to appropriate view based on config.
+    // Always serve the SPA so common.js can establish the epistery session;
+    // without it, expired sessions land on a bare 403 with no recovery path.
+    // Actual data is still gated by permissions on the JSON API endpoints.
     router.get('/board', async (req, res) => {
-      const permissions = await this.getPermissions(req.episteryClient, req);
-      if (!permissions.read) {
-        const address = req.episteryClient?.address || '';
-        const addressDisplay = address ? `${address.slice(0,8)}...${address.slice(-6)}` : 'unknown';
-        return res.status(403).send(`
-          <!DOCTYPE html>
-          <html><head><title>Access Denied</title></head>
-          <body style="font-family: sans-serif; max-width: 600px; margin: 100px auto; text-align: center;">
-            <h1>Access Denied</h1>
-            <p>Browser address: <span style='font-family:monospace;font-weight:bold'>${addressDisplay}</span></p>
-            <p>You do not have access to this message board.</p>
-            <div id="requestForm" style="margin-top:24px;${address ? '' : 'display:none'}">
-              <input type="text" id="requestName" placeholder="Name (optional)" style="width:100%;padding:8px;margin-bottom:8px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box;">
-              <textarea id="requestMessage" placeholder="Message for the host (optional)" style="width:100%;min-height:60px;padding:8px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box;margin-bottom:8px;font-family:inherit;resize:vertical"></textarea>
-              <button onclick="submitRequest()" style="padding:8px 24px;background:#2d5016;color:white;border:none;border-radius:6px;cursor:pointer;font-size:14px">Request Access</button>
-            </div>
-            <p id="statusMsg" style="margin-top:16px"></p>
-            <script>
-              async function submitRequest() {
-                try {
-                  const resp = await fetch('/api/acl/request-access', {
-                    method: 'POST',
-                    headers: {'Content-Type':'application/json'},
-                    body: JSON.stringify({
-                      address: '${address}',
-                      listName: 'epistery::reader',
-                      agentName: '@epistery/message-board',
-                      name: document.getElementById('requestName').value.trim(),
-                      message: document.getElementById('requestMessage').value.trim()
-                    })
-                  });
-                  if (resp.ok) {
-                    document.getElementById('requestForm').style.display = 'none';
-                    document.getElementById('statusMsg').textContent = 'Access request submitted. Please wait for approval.';
-                  } else {
-                    const err = await resp.json();
-                    document.getElementById('statusMsg').textContent = err.error || 'Request failed';
-                  }
-                } catch(e) {
-                  document.getElementById('statusMsg').textContent = 'Request failed: ' + e.message;
-                }
-              }
-            </script>
-          </body></html>
-        `);
-      }
-
       const viewMode = req.boardConfig.data.messageBoard.viewMode || 'board';
       const viewPath = path.join(__dirname, `client/${viewMode}.html`);
 
