@@ -8,7 +8,6 @@ import { Config } from 'epistery';
 import crypto from 'crypto';
 import https from "https";
 import http from "http";
-import StorageFactory from '../epistery-host/utils/storage/StorageFactory.mjs';
 
 const require = createRequire(import.meta.url);
 const ethers = require('ethers');
@@ -48,7 +47,7 @@ export default class MessageBoardAgent {
    */
   async getStorage(domain) {
     if (!this.storageBackends.has(domain)) {
-      const storage = await StorageFactory.create(null, domain, 'message-board');
+      const storage = await this.manifestConfig.getStorage(domain, 'message-board');
       this.storageBackends.set(domain, storage);
     }
     return this.storageBackends.get(domain);
