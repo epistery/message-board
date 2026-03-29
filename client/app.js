@@ -26,20 +26,14 @@ async function init() {
   handleHashChange();
   window.addEventListener('hashchange', handleHashChange);
 
-  // Load posts
-  await loadPosts();
-
-  // Connect WebSocket for real-time updates
-  connectWebSocket();
-
-  // Setup event listeners
-  setupEventListeners();
-
   // Ensure wallet exists (auto-create if needed)
   await ensureWallet();
 
-  // Check authentication status
+  // Check authentication status (also loads posts and connects WS if authorized)
   await checkAuthStatus();
+
+  // Setup event listeners
+  setupEventListeners();
 }
 
 // Ensure wallet exists, auto-creating if necessary
@@ -74,7 +68,7 @@ async function checkAuthStatus() {
 
     const accessData = await response.json();
 
-    if (accessData.address) {
+    if (accessData.address && accessData.level >= 1) {
       currentUser = { address: accessData.address };
 
       permissions = {
@@ -84,15 +78,19 @@ async function checkAuthStatus() {
         admin: accessData.level >= 3  // Level 3 (admin) or higher
       };
 
-      // Re-render posts now that we have currentUser (for edit/delete buttons)
-      renderPosts();
+      // Authorized: load posts and connect WebSocket
+      await loadPosts();
+      connectWebSocket();
 
       // Hide post form if user doesn't have edit access (level < 2)
       if (accessData.level < 2) {
         hidePostForm();
       }
     } else {
-      // No authenticated client
+      // No access - clear any cached posts and don't load or connect
+      localStorage.removeItem('message-board-posts');
+      posts = [];
+      renderPosts();
       hidePostForm();
     }
   } catch (error) {

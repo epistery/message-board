@@ -357,12 +357,8 @@ export default class MessageBoardAgent {
             }
           }
         } else {
-          // No authenticated client - only show channels with no ACL
-          for (const channel of channels) {
-            if (!channel.list) {
-              accessibleChannels.push(channel);
-            }
-          }
+          // No authenticated client - no access (default deny)
+          accessibleChannels.length = 0;
         }
 
         res.json(accessibleChannels);
@@ -1060,8 +1056,8 @@ export default class MessageBoardAgent {
         }
       }
     } else {
-      // Unauthenticated: only channels with no ACL
-      channels.filter(ch => !ch.list).forEach(ch => accessible.add(ch.name));
+      // Unauthenticated: no access (default deny)
+      accessible.delete('general');
     }
 
     return accessible;
