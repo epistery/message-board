@@ -248,7 +248,10 @@
 
     .form-group input,
     .form-group textarea,
-    .form-group select {
+    .form-group select,
+    .console-panel select,
+    .console-panel input[type="text"],
+    .member-table select {
       width: 100%;
       padding: var(--spacer);
       border: 1px solid var(--page-border);
@@ -257,11 +260,15 @@
       font-size: 0.875rem;
       background: var(--bg-color);
       color: var(--text-color);
+      box-sizing: border-box;
     }
 
     .form-group input:focus,
     .form-group textarea:focus,
-    .form-group select:focus {
+    .form-group select:focus,
+    .console-panel select:focus,
+    .console-panel input[type="text"]:focus,
+    .member-table select:focus {
       outline: none;
       border-color: var(--action-color);
     }
@@ -331,8 +338,10 @@
       align-items: center;
     }
 
-    .input-group input {
+    .input-group input,
+    .input-group select {
       flex: 1;
+      width: auto;
     }
 
     .input-group .btn {
@@ -366,7 +375,7 @@
           <p style="font-size: 0.75rem; color: var(--text-color-quiet); margin: 4px 0 0 0;">Choose between post board (Twitter-like) or chat mode (Slack-like)</p>
         </div>
         <div class="input-group">
-          <select id="view-mode" style="width: 150px;">
+          <select id="view-mode">
             <option value="board">Post Board</option>
             <option value="chat">Chat Mode</option>
           </select>
@@ -492,8 +501,10 @@
 
         <div class="form-group">
           <label for="channel-list">Access List (optional)</label>
-          <input type="text" id="channel-list" placeholder="message-board::readers">
-          <p style="font-size: 0.75rem; color: var(--text-color-quiet); margin: 4px 0 0 0;">Leave empty to use default access control. Otherwise specify an ACL list name.</p>
+          <select id="channel-list">
+            <option value="">Default access</option>
+          </select>
+          <p style="font-size: 0.75rem; color: var(--text-color-quiet); margin: 4px 0 0 0;">Leave as default or select an ACL list to restrict access.</p>
         </div>
 
         <div class="form-actions">
@@ -717,7 +728,7 @@
       const countId = type === 'moderator' ? 'moderator-count' : 'whitelist-count';
 
       try {
-        const response = await fetch(`/white-list/api/lists/${encodeURIComponent(listName)}/members`, {
+        const response = await fetch(`/api/acl/list/${encodeURIComponent(listName)}`, {
           credentials: 'include'
         });
 
@@ -794,11 +805,11 @@
       const listName = type === 'moderator' ? config.moderatorList : config.postingList;
 
       try {
-        const response = await fetch(`/white-list/api/lists/${encodeURIComponent(listName)}/members`, {
+        const response = await fetch('/api/acl/add', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
-          body: JSON.stringify({ address, name: name || null })
+          body: JSON.stringify({ address, name: name || null, listName })
         });
 
         if (!response.ok) {
@@ -824,9 +835,11 @@
       const listName = type === 'moderator' ? config.moderatorList : config.postingList;
 
       try {
-        const response = await fetch(`/white-list/api/lists/${encodeURIComponent(listName)}/members/${encodeURIComponent(address)}`, {
-          method: 'DELETE',
-          credentials: 'include'
+        const response = await fetch('/api/acl/remove', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ address, listName })
         });
 
         if (!response.ok) {
@@ -945,6 +958,7 @@
     // Channels Management
     async function loadChannels() {
       try {
+        await fetchAclLists();
         const response = await fetch('/agent/epistery/message-board/api/channels', { credentials: 'include' });
         if (!response.ok) throw new Error('Failed to load channels');
 
@@ -976,11 +990,15 @@
               </thead>
               <tbody>
                 ${channels.map(channel => {
-                  console.log('[admin] Rendering channel:', channel, 'name:', channel.name);
                   return `
                   <tr>
                     <td><strong>#${escapeHtml(channel.name || 'MISSING')}</strong></td>
-                    <td class="mono">${channel.list ? escapeHtml(channel.list) : '<em style="color: var(--text-color-quiet);">Default access</em>'}</td>
+                    <td>
+                      <select class="channel-list-select" data-channel="${escapeHtml(channel.name)}" onchange="updateChannelList(this)">
+                        <option value=""${!channel.list ? ' selected' : ''}>Default access</option>
+                        ${(window._aclLists || []).map(l => `<option value="${escapeHtml(l)}"${channel.list === l ? ' selected' : ''}>${escapeHtml(l)}</option>`).join('')}
+                      </select>
+                    </td>
                     <td style="text-align: right;">
                       <button class="btn btn-danger" onclick="deleteChannel('${escapeHtml(channel.name)}')">Delete</button>
                     </td>
@@ -1005,8 +1023,53 @@
       }
     }
 
-    function showAddChannelModal() {
+    async function fetchAclLists() {
+      try {
+        const response = await fetch('/api/acl/list', { credentials: 'include' });
+        if (!response.ok) throw new Error('Failed to fetch ACL lists');
+        const data = await response.json();
+        window._aclLists = data.lists || [];
+      } catch (error) {
+        console.error('Failed to fetch ACL lists:', error);
+        window._aclLists = [];
+      }
+    }
+
+    function populateListDropdown(selectEl, selectedValue) {
+      const options = ['<option value="">Default access</option>'];
+      for (const list of (window._aclLists || [])) {
+        const selected = list === selectedValue ? ' selected' : '';
+        options.push(`<option value="${escapeHtml(list)}"${selected}>${escapeHtml(list)}</option>`);
+      }
+      selectEl.innerHTML = options.join('');
+    }
+
+    async function updateChannelList(selectEl) {
+      const channelName = selectEl.dataset.channel;
+      const list = selectEl.value;
+      try {
+        const response = await fetch(`/agent/epistery/message-board/api/channels/${encodeURIComponent(channelName)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ list: list || null })
+        });
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error || 'Failed to update channel');
+        }
+        showMessage(`Updated access list for #${channelName}`, 'success');
+      } catch (error) {
+        console.error('Failed to update channel list:', error);
+        showMessage('Failed to update channel: ' + error.message, 'error');
+        await loadChannels();
+      }
+    }
+
+    async function showAddChannelModal() {
       document.getElementById('add-channel-modal').classList.add('active');
+      await fetchAclLists();
+      populateListDropdown(document.getElementById('channel-list'), '');
       document.getElementById('channel-name').focus();
     }
 

@@ -446,6 +446,42 @@ export default class MessageBoardAgent {
       }
     });
 
+    // Update channel (admin only) - change access list
+    router.patch('/api/channels/:name', async (req, res) => {
+      try {
+        const permission = await this.checkAdminPermission(req);
+        if (!permission.allowed) {
+          return res.status(403).json({ error: 'Only admins can update channels' });
+        }
+
+        const { name } = req.params;
+        const { list } = req.body;
+        if (!req.boardConfig.data.messageBoard.channels) {
+          return res.status(404).json({ error: 'Channel not found' });
+        }
+
+        const channels = req.boardConfig.data.messageBoard.channels;
+        const index = channels.findIndex(c => {
+          const channel = typeof c === 'string' ? JSON.parse(c) : c;
+          return channel.name === name;
+        });
+
+        if (index === -1) {
+          return res.status(404).json({ error: 'Channel not found' });
+        }
+
+        const channel = typeof channels[index] === 'string' ? JSON.parse(channels[index]) : channels[index];
+        channel.list = list || null;
+        channels[index] = channel;
+        req.boardConfig.save();
+
+        res.json({ success: true, channel });
+      } catch (error) {
+        console.error('[message-board] Update channel error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
     // Get view mode
     router.get('/api/config/view-mode', (req, res) => {
       const viewMode = req.boardConfig.data.messageBoard.viewMode || 'board';

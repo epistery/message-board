@@ -130,7 +130,7 @@ function renderChannels() {
 
   container.innerHTML = channels.map(channel => `
     <li class="sidebar-link">
-      <a href="#${channel.name === 'general' ? '' : channel.name}" class="${currentChannel === channel.name ? 'active' : ''}" onclick="return false;">
+      <a href="#${channel.name === 'general' ? '' : channel.name}" class="${currentChannel === channel.name ? 'active' : ''}">
         # ${mb.escapeHtml(channel.name)}
       </a>
     </li>
