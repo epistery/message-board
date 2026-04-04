@@ -560,6 +560,58 @@ export default class MessageBoardAgent {
       }
     });
 
+    // Get unread counts per channel for the authenticated user
+    router.get('/api/unread', async (req, res) => {
+      try {
+        if (!req.userVault || !req.episteryClient?.address) {
+          return res.status(401).json({ error: 'Authentication required' });
+        }
+
+        const vault = await req.userVault.get();
+        const lastRead = vault.messageBoard?.lastRead || {};
+
+        const data = await this.readData(req.domain);
+        const accessible = await this.getAccessibleChannelNames(req);
+
+        const counts = {};
+        for (const channel of accessible) {
+          const cutoff = lastRead[channel] || 0;
+          const channelPosts = data.posts.filter(post => {
+            const postChannel = post.channel || 'general';
+            return postChannel === channel && post.timestamp > cutoff;
+          });
+          counts[channel] = channelPosts.length;
+        }
+
+        res.json(counts);
+      } catch (error) {
+        console.error('[message-board] Unread counts error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Mark a channel as read
+    router.post('/api/channels/:name/read', async (req, res) => {
+      try {
+        if (!req.userVault || !req.episteryClient?.address) {
+          return res.status(401).json({ error: 'Authentication required' });
+        }
+
+        const channelName = req.params.name;
+        const vault = await req.userVault.get();
+
+        if (!vault.messageBoard) vault.messageBoard = {};
+        if (!vault.messageBoard.lastRead) vault.messageBoard.lastRead = {};
+        vault.messageBoard.lastRead[channelName] = Date.now();
+
+        await req.userVault.set(vault);
+        res.json({ success: true });
+      } catch (error) {
+        console.error('[message-board] Mark read error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
     // Get posts filtered by channel access — server enforces ACL, not client
     router.get('/api/posts', async (req, res) => {
       try {

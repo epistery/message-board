@@ -12,6 +12,7 @@ let permissions = null; // Loaded from /api/permissions
 let markup = null; // Markdown renderer
 let channels = []; // Available channels
 let currentChannel = null; // Currently selected channel (null = general)
+let unreadCounts = {}; // { channelName: count }
 
 // Initialize
 async function init() {
@@ -78,9 +79,15 @@ async function checkAuthStatus() {
         admin: accessData.level >= 3  // Level 3 (admin) or higher
       };
 
-      // Authorized: load posts and connect WebSocket
+      // Authorized: load posts, load unread counts, connect WebSocket
       await loadPosts();
+      await loadUnreadCounts();
       connectWebSocket();
+
+      // Mark current channel as read on initial load
+      if (currentChannel) {
+        markChannelRead(currentChannel);
+      }
 
       // Hide post form if user doesn't have edit access (level < 2)
       if (accessData.level < 2) {
@@ -118,6 +125,70 @@ async function loadChannels() {
   }
 }
 
+// Load unread counts from server (vault-backed) or localStorage fallback
+async function loadUnreadCounts() {
+  try {
+    const response = await fetch('/agent/epistery/message-board/api/unread');
+    if (response.ok) {
+      unreadCounts = await response.json();
+      renderChannels();
+      return;
+    }
+  } catch (error) {
+    console.error('[message-board] Failed to load unread counts:', error);
+  }
+
+  // Fallback: localStorage-based tracking
+  try {
+    const stored = localStorage.getItem('message-board-lastRead');
+    if (stored) {
+      const lastRead = JSON.parse(stored);
+      // Estimate unread from cached posts
+      const cachedPosts = localStorage.getItem('message-board-posts');
+      if (cachedPosts) {
+        const allPosts = JSON.parse(cachedPosts);
+        unreadCounts = {};
+        for (const channel of channels) {
+          const cutoff = lastRead[channel.name] || 0;
+          unreadCounts[channel.name] = allPosts.filter(p => {
+            const postChannel = p.channel || 'general';
+            return postChannel === channel.name && p.timestamp > cutoff;
+          }).length;
+        }
+        renderChannels();
+      }
+    }
+  } catch (error) {
+    // Ignore localStorage errors
+  }
+}
+
+// Mark a channel as read (server + localStorage fallback)
+async function markChannelRead(channelName) {
+  unreadCounts[channelName] = 0;
+  renderChannels();
+
+  // Server-side (vault)
+  try {
+    fetch(`/agent/epistery/message-board/api/channels/${encodeURIComponent(channelName)}/read`, {
+      method: 'POST',
+      credentials: 'include'
+    });
+  } catch {
+    // fire-and-forget
+  }
+
+  // localStorage fallback
+  try {
+    const stored = localStorage.getItem('message-board-lastRead');
+    const lastRead = stored ? JSON.parse(stored) : {};
+    lastRead[channelName] = Date.now();
+    localStorage.setItem('message-board-lastRead', JSON.stringify(lastRead));
+  } catch {
+    // Ignore
+  }
+}
+
 // Render channels in sidebar
 function renderChannels() {
   const container = document.getElementById('channels-list');
@@ -128,13 +199,18 @@ function renderChannels() {
     return;
   }
 
-  container.innerHTML = channels.map(channel => `
+  container.innerHTML = channels.map(channel => {
+    const count = unreadCounts[channel.name] || 0;
+    const badge = count > 0 ? `<span class="unread-badge">${count}</span>` : '';
+    return `
     <li class="sidebar-link">
       <a href="#${channel.name === 'general' ? '' : channel.name}" class="${currentChannel === channel.name ? 'active' : ''}">
-        # ${mb.escapeHtml(channel.name)}
+        <span># ${mb.escapeHtml(channel.name)}</span>
+        ${badge}
       </a>
     </li>
-  `).join('');
+  `;
+  }).join('');
 }
 
 // Handle hash change for channel selection
@@ -156,6 +232,9 @@ async function selectChannel(channelName) {
 
   // Reload posts for this channel
   await loadPosts();
+
+  // Mark as read
+  markChannelRead(channelName);
 }
 
 // Load posts from API or localStorage
@@ -625,6 +704,14 @@ function handleWebSocketMessage(message) {
       }
       savePosts();
       renderPosts();
+      // Increment unread if post is in a different channel
+      {
+        const postChannel = message.post.channel || 'general';
+        if (postChannel !== currentChannel) {
+          unreadCounts[postChannel] = (unreadCounts[postChannel] || 0) + 1;
+          renderChannels();
+        }
+      }
       break;
 
     case 'new-comment':
@@ -636,6 +723,12 @@ function handleWebSocketMessage(message) {
         }
         savePosts();
         renderPosts();
+        // Increment unread if comment is in a different channel
+        const commentChannel = post.channel || 'general';
+        if (commentChannel !== currentChannel) {
+          unreadCounts[commentChannel] = (unreadCounts[commentChannel] || 0) + 1;
+          renderChannels();
+        }
       }
       break;
 

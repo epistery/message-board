@@ -36,7 +36,9 @@
     }
 
     .sidebar-link a {
-      display: block;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
       padding: var(--spacerhalf) var(--spacer);
       color: var(--text-color);
       text-decoration: none;
@@ -48,6 +50,18 @@
     .sidebar-link a:hover {
       background: var(--bg-color-d);
       color: var(--rust-mid);
+    }
+
+    .unread-badge {
+      background: var(--rust-mid);
+      color: white;
+      font-size: 0.7em;
+      padding: 1px 6px;
+      border-radius: 10px;
+      margin-left: 0.5em;
+      font-weight: 600;
+      min-width: 1.2em;
+      text-align: center;
     }
 
     .board-header {
