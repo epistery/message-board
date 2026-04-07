@@ -253,6 +253,12 @@ function renderMessage(post) {
   const canDelete = mb.currentUser &&
     (mb.currentUser.address.toLowerCase() === post.author.toLowerCase() || mb.permissions.admin);
 
+  const commentsHtml = post.comments && post.comments.length > 0
+    ? `<div class="comments">${post.comments.map(c => renderComment(post.id, c)).join('')}</div>`
+    : '';
+
+  const canComment = mb.permissions && mb.permissions.edit;
+
   return `
     <div class="message" data-message-id="${post.id}">
       <img src="${avatar}" class="message-avatar" alt="Avatar">
@@ -264,15 +270,92 @@ function renderMessage(post) {
         </div>
         <div class="message-text">${mb.markup ? mb.markup.render(post.text) : mb.escapeHtml(post.text)}</div>
         ${imageHtml}
-        ${canDelete ? `
-          <div class="message-actions">
-            <button class="message-action-btn" onclick="window.deleteMessage(${post.id})">Delete</button>
+        <div class="message-actions">
+          ${canComment ? `<button class="message-action-btn" onclick="window.showCommentForm(${post.id})">💬 Comment</button>` : ''}
+          ${canDelete ? `<button class="message-action-btn" onclick="window.deleteMessage(${post.id})">Delete</button>` : ''}
+        </div>
+        ${commentsHtml}
+        ${canComment ? `
+          <div class="comment-form" id="comment-form-${post.id}" style="display: none;">
+            <input type="text" id="comment-input-${post.id}" placeholder="Write a comment..." onkeydown="if(event.key==='Enter'){event.preventDefault();window.addComment(${post.id});}">
+            <button onclick="window.addComment(${post.id})">Post</button>
           </div>
         ` : ''}
       </div>
     </div>
   `;
 }
+
+// Render a single comment
+function renderComment(postId, comment) {
+  const date = new Date(comment.timestamp);
+  const timeAgo = mb.getTimeAgo(date);
+  const shortAddress = comment.author.substring(0, 8) + '...' + comment.author.substring(comment.author.length - 6);
+  const avatar = mb.generateAvatar(comment.author, 28);
+  const authorDisplay = comment.authorName || shortAddress;
+  const canComment = mb.permissions && mb.permissions.edit;
+  const replyHandle = (comment.authorName || shortAddress).replace(/'/g, "\\'");
+
+  return `
+    <div class="comment">
+      <div class="comment-with-avatar">
+        <img src="${avatar}" class="avatar avatar-small" alt="Avatar">
+        <div class="comment-content">
+          <div class="comment-header">
+            <span class="comment-author">${mb.escapeHtml(authorDisplay)}</span>
+            <span class="clickable-address" onclick="window.copyAddress('${comment.author}')" title="${comment.author}">${shortAddress}</span>
+            <span class="comment-time">${timeAgo}</span>
+            ${canComment ? `<button class="comment-reply-btn" onclick="window.replyToComment(${postId}, '${replyHandle}')">Reply</button>` : ''}
+          </div>
+          <div class="comment-text">${mb.markup ? mb.markup.render(comment.text) : mb.escapeHtml(comment.text)}</div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// Show / hide the comment form
+window.showCommentForm = function(postId) {
+  const form = document.getElementById(`comment-form-${postId}`);
+  if (!form) return;
+  const visible = form.style.display !== 'none';
+  form.style.display = visible ? 'none' : 'flex';
+  if (!visible) {
+    const input = document.getElementById(`comment-input-${postId}`);
+    if (input) input.focus();
+  }
+};
+
+// Reply to a comment — adds another comment to the original post,
+// prefilled with @handle so the threading intent is preserved (one level deep).
+window.replyToComment = function(postId, handle) {
+  const form = document.getElementById(`comment-form-${postId}`);
+  const input = document.getElementById(`comment-input-${postId}`);
+  if (!form || !input) return;
+  form.style.display = 'flex';
+  const mention = `@${handle} `;
+  if (!input.value.startsWith(mention)) input.value = mention + input.value;
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+};
+
+// Submit a comment
+window.addComment = async function(postId) {
+  const input = document.getElementById(`comment-input-${postId}`);
+  if (!input) return;
+  const text = input.value.trim();
+  if (!text) return;
+
+  try {
+    await mb.addComment(postId, text);
+    input.value = '';
+    renderMessages();
+    scrollToBottom();
+  } catch (error) {
+    console.error('[chat] Comment error:', error);
+    showError(error.message);
+  }
+};
 
 // Delete message
 window.deleteMessage = async function(postId) {

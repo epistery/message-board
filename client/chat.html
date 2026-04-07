@@ -349,6 +349,107 @@
     .request-access-widget {
       margin-bottom: var(--spacer);
     }
+
+    .comments {
+      margin-top: var(--spacerhalf);
+      padding-left: var(--spacer);
+      border-left: 2px solid var(--page-border);
+      display: flex;
+      flex-direction: column;
+      gap: var(--spacerhalf);
+    }
+
+    .comment-with-avatar {
+      display: flex;
+      gap: var(--spacerhalf);
+      align-items: flex-start;
+    }
+
+    .avatar-small {
+      width: 28px;
+      height: 28px;
+      border-radius: 4px;
+      flex-shrink: 0;
+    }
+
+    .comment-content {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .comment-header {
+      display: flex;
+      align-items: baseline;
+      gap: var(--spacerhalf);
+      font-size: 13px;
+    }
+
+    .comment-author {
+      font-weight: 600;
+      color: var(--text-color);
+    }
+
+    .comment-time {
+      font-size: 11px;
+      color: var(--text-color-quiet);
+    }
+
+    .comment-reply-btn {
+      background: transparent;
+      border: none;
+      padding: 0;
+      margin-left: auto;
+      font-size: 12px;
+      color: var(--action-color);
+      cursor: pointer;
+    }
+
+    .comment-reply-btn:hover {
+      text-decoration: underline;
+    }
+
+    .comment-text {
+      font-size: 14px;
+      line-height: 1.4;
+      color: var(--text-color);
+      word-wrap: break-word;
+    }
+
+    .comment-form {
+      display: flex;
+      gap: var(--spacerhalf);
+      margin-top: var(--spacerhalf);
+    }
+
+    .comment-form input {
+      flex: 1;
+      padding: 6px var(--spacer);
+      border: 1px solid var(--page-border);
+      border-radius: 4px;
+      background: var(--bg-color);
+      color: var(--text-color);
+      font-size: 14px;
+      font-family: inherit;
+    }
+
+    .comment-form input:focus {
+      outline: none;
+      border-color: var(--action-color);
+    }
+
+    .comment-form button {
+      padding: 6px 14px;
+      background: var(--action-color);
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .comment-form button:hover {
+      background: var(--action-color-hilite);
+    }
   </style>
   <script src="/script/common.js"></script>
 </head>

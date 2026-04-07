@@ -636,6 +636,28 @@ export default class MessageBoardAgent {
           }
         }
 
+        // Enrich posts/comments with the alias name from DomainAcl when authorName
+        // is missing. Names are not unique (one person, multiple device wallets may
+        // share an alias), but the lookup is address→name only, so that's fine.
+        try {
+          if (req.domainAcl) {
+            const nameMap = await req.domainAcl.getNameMap();
+            const lookup = (addr) => addr ? (nameMap.get(addr.toLowerCase()) || null) : null;
+            posts = posts.map(post => {
+              const enriched = { ...post, authorName: post.authorName || lookup(post.author) };
+              if (Array.isArray(post.comments)) {
+                enriched.comments = post.comments.map(c => ({
+                  ...c,
+                  authorName: c.authorName || lookup(c.author)
+                }));
+              }
+              return enriched;
+            });
+          }
+        } catch (e) {
+          console.error('[message-board] Name enrichment failed:', e.message);
+        }
+
         res.json(posts);
       } catch (error) {
         res.status(500).json({ error: error.message });

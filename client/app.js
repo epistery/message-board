@@ -326,7 +326,7 @@ function renderPost(post) {
   const commentsHtml = post.comments && post.comments.length > 0
     ? `
       <div class="comments">
-        ${post.comments.map(comment => renderComment(comment)).join('')}
+        ${post.comments.map(comment => renderComment(post.id, comment)).join('')}
       </div>
     `
     : '';
@@ -371,7 +371,7 @@ function renderPost(post) {
 }
 
 // Render comment
-function renderComment(comment) {
+function renderComment(postId, comment) {
   const date = new Date(comment.timestamp);
   const timeAgo = mb.getTimeAgo(date);
   const shortAddress = comment.author.substring(0, 8) + '...' + comment.author.substring(comment.author.length - 6);
@@ -382,6 +382,8 @@ function renderComment(comment) {
     ? `${mb.escapeHtml(comment.authorName)} <span class="clickable-address" onclick="copyAddress('${comment.author}')" title="Click to copy full address">(${shortAddress})</span>`
     : `<span class="clickable-address" onclick="copyAddress('${comment.author}')" title="Click to copy full address">${shortAddress}</span>`;
 
+  const replyHandle = (comment.authorName || shortAddress).replace(/'/g, "\\'");
+
   return `
     <div class="comment">
       <div class="comment-with-avatar">
@@ -390,6 +392,7 @@ function renderComment(comment) {
           <div class="comment-header">
             <span class="comment-author">${authorDisplay}</span>
             <span class="comment-time">${timeAgo}</span>
+            <button class="comment-reply-btn" onclick="replyToComment(${postId}, '${replyHandle}')">Reply</button>
           </div>
           <div class="comment-text">${markup ? markup.render(comment.text) : mb.escapeHtml(comment.text)}</div>
         </div>
@@ -397,6 +400,18 @@ function renderComment(comment) {
     </div>
   `;
 }
+
+// Reply to a comment — still attaches to the original post (one level deep)
+window.replyToComment = function(postId, handle) {
+  const form = document.getElementById(`comment-form-${postId}`);
+  const input = document.getElementById(`comment-input-${postId}`);
+  if (!form || !input) return;
+  form.style.display = 'flex';
+  const mention = `@${handle} `;
+  if (!input.value.startsWith(mention)) input.value = mention + input.value;
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+};
 
 // Copy address to clipboard
 window.copyAddress = (address) => mb.copyAddress(address);
