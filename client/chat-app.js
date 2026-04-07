@@ -217,10 +217,21 @@ async function sendMessage() {
   }
 }
 
+// Persist open comment forms and drafts across re-renders so a WebSocket
+// update doesn't wipe out a comment the user is composing.
+const openCommentForms = new Set();
+const commentDrafts = new Map();
+
 // Render messages
 function renderMessages() {
   const container = document.getElementById('chat-messages');
   if (!container) return;
+
+  // Snapshot any in-progress comment drafts before destroying the DOM.
+  for (const postId of openCommentForms) {
+    const input = document.getElementById(`comment-input-${postId}`);
+    if (input) commentDrafts.set(postId, input.value);
+  }
 
   if (mb.posts.length === 0) {
     container.innerHTML = `
@@ -235,6 +246,14 @@ function renderMessages() {
   // Render in reverse order (oldest first for chat view)
   const messages = [...mb.posts].reverse();
   container.innerHTML = messages.map(post => renderMessage(post)).join('');
+
+  // Re-open any forms that were open before the re-render and restore drafts.
+  for (const postId of openCommentForms) {
+    const form = document.getElementById(`comment-form-${postId}`);
+    if (form) form.style.display = 'flex';
+    const input = document.getElementById(`comment-input-${postId}`);
+    if (input && commentDrafts.has(postId)) input.value = commentDrafts.get(postId);
+  }
 }
 
 // Render single message
@@ -318,11 +337,15 @@ function renderComment(postId, comment) {
 window.showCommentForm = function(postId) {
   const form = document.getElementById(`comment-form-${postId}`);
   if (!form) return;
-  const visible = form.style.display !== 'none';
-  form.style.display = visible ? 'none' : 'flex';
-  if (!visible) {
+  const willOpen = form.style.display === 'none';
+  form.style.display = willOpen ? 'flex' : 'none';
+  if (willOpen) {
+    openCommentForms.add(postId);
     const input = document.getElementById(`comment-input-${postId}`);
     if (input) input.focus();
+  } else {
+    openCommentForms.delete(postId);
+    commentDrafts.delete(postId);
   }
 };
 
@@ -333,8 +356,10 @@ window.replyToComment = function(postId, handle) {
   const input = document.getElementById(`comment-input-${postId}`);
   if (!form || !input) return;
   form.style.display = 'flex';
+  openCommentForms.add(postId);
   const mention = `@${handle} `;
   if (!input.value.startsWith(mention)) input.value = mention + input.value;
+  commentDrafts.set(postId, input.value);
   input.focus();
   input.setSelectionRange(input.value.length, input.value.length);
 };
@@ -349,6 +374,8 @@ window.addComment = async function(postId) {
   try {
     await mb.addComment(postId, text);
     input.value = '';
+    openCommentForms.delete(postId);
+    commentDrafts.delete(postId);
     renderMessages();
     scrollToBottom();
   } catch (error) {

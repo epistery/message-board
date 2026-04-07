@@ -10,10 +10,28 @@
       box-sizing: border-box;
     }
 
+    /* Hard guarantee: the page itself never scrolls horizontally. Per-post
+       overflow is still allowed to scroll within the post via .post pre. */
+    html, body {
+      max-width: 100%;
+      overflow-x: hidden;
+    }
+
     .board-main {
       max-width: 800px;
       margin: 0 auto;
       width: 100%;
+      min-width: 0;
+    }
+
+    /* Defensive wrapping for anything markdown might render inside a post
+       that wasn't covered by .post-text rules (tables, raw <a>, inline code…) */
+    .post * {
+      max-width: 100%;
+    }
+    .post table {
+      display: block;
+      overflow-x: auto;
     }
 
     .sidebar-title {

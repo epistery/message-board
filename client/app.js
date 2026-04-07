@@ -299,9 +299,21 @@ function savePosts() {
   }
 }
 
+// Tracks which post comment forms are currently open, so a WebSocket-driven
+// re-render doesn't wipe out a form the user is composing in.
+const openCommentForms = new Set();
+// Preserves draft text per post id across re-renders.
+const commentDrafts = new Map();
+
 // Render posts
 function renderPosts() {
   const container = document.getElementById('posts-container');
+
+  // Snapshot any in-progress comment drafts before we blow away the DOM.
+  for (const postId of openCommentForms) {
+    const input = document.getElementById(`comment-input-${postId}`);
+    if (input) commentDrafts.set(postId, input.value);
+  }
 
   if (posts.length === 0) {
     container.innerHTML = `
@@ -314,6 +326,14 @@ function renderPosts() {
   }
 
   container.innerHTML = posts.map(post => renderPost(post)).join('');
+
+  // Re-open any comment forms that were open before the re-render and restore drafts.
+  for (const postId of openCommentForms) {
+    const form = document.getElementById(`comment-form-${postId}`);
+    if (form) form.style.display = 'flex';
+    const input = document.getElementById(`comment-input-${postId}`);
+    if (input && commentDrafts.has(postId)) input.value = commentDrafts.get(postId);
+  }
 }
 
 // Render single post
@@ -407,8 +427,10 @@ window.replyToComment = function(postId, handle) {
   const input = document.getElementById(`comment-input-${postId}`);
   if (!form || !input) return;
   form.style.display = 'flex';
+  openCommentForms.add(postId);
   const mention = `@${handle} `;
   if (!input.value.startsWith(mention)) input.value = mention + input.value;
+  commentDrafts.set(postId, input.value);
   input.focus();
   input.setSelectionRange(input.value.length, input.value.length);
 };
@@ -416,11 +438,20 @@ window.replyToComment = function(postId, handle) {
 // Copy address to clipboard
 window.copyAddress = (address) => mb.copyAddress(address);
 
-// Show comment form
+// Show / hide comment form (and remember which forms are open so re-renders
+// don't wipe them out — the WebSocket re-render is otherwise constant).
 window.showCommentForm = function(postId) {
   const form = document.getElementById(`comment-form-${postId}`);
-  if (form) {
-    form.style.display = form.style.display === 'none' ? 'flex' : 'none';
+  if (!form) return;
+  const willOpen = form.style.display === 'none';
+  form.style.display = willOpen ? 'flex' : 'none';
+  if (willOpen) {
+    openCommentForms.add(postId);
+    const input = document.getElementById(`comment-input-${postId}`);
+    if (input) input.focus();
+  } else {
+    openCommentForms.delete(postId);
+    commentDrafts.delete(postId);
   }
 };
 
@@ -452,6 +483,8 @@ window.addComment = async function(postId) {
     }
 
     input.value = '';
+    openCommentForms.delete(postId);
+    commentDrafts.delete(postId);
     await loadPosts(); // Reload to show new comment
   } catch (error) {
     console.error('[message-board] Comment error:', error);
