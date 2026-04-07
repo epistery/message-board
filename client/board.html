@@ -197,6 +197,9 @@
       border-radius: 8px;
       margin-bottom: var(--spacer2);
       border: 1px solid var(--page-border);
+      max-width: 100%;
+      min-width: 0;
+      overflow: hidden;
     }
 
     .avatar {
@@ -219,6 +222,12 @@
       display: flex;
       gap: var(--spacer);
       align-items: start;
+      min-width: 0;
+    }
+
+    .post-author-section > div {
+      min-width: 0;
+      flex: 1;
     }
 
     .post-author {
@@ -256,7 +265,10 @@
       line-height: 1.6;
       color: var(--text-color);
       margin-bottom: var(--spacer);
-      word-wrap: break-word;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      min-width: 0;
+      max-width: 100%;
     }
 
     .post-text p {
@@ -270,6 +282,8 @@
     .post-text a {
       color: var(--action-color);
       text-decoration: none;
+      overflow-wrap: anywhere;
+      word-break: break-word;
     }
 
     .post-text a:hover {
