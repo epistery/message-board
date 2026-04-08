@@ -43,7 +43,28 @@ export default class MarkUp {
     body = this.sanitize(body);
 
     // Render markdown (synchronous)
-    return this.marked.parse(body);
+    const html = this.marked.parse(body);
+
+    // Balance tags. marked passes raw inline HTML through (gfm: true), so a
+    // post containing pasted HTML with an unclosed <a> emits unclosed HTML.
+    // When that string is concatenated into a larger innerHTML, the browser
+    // parser lets the open tag wrap subsequent siblings — which has bitten
+    // us by making the comment form a child of an unclosed anchor, causing
+    // clicks to navigate. Run the output through the HTML parser inside an
+    // isolated container so any unbalanced tags are auto-closed within scope.
+    return this.balanceHtml(html);
+  }
+
+  /**
+   * Round-trip HTML through the browser's parser so unclosed tags are
+   * auto-closed within an isolated scope. The DOM parser is the same one
+   * the page itself uses, so the output is guaranteed well-formed.
+   */
+  balanceHtml(html) {
+    if (typeof document === 'undefined') return html;
+    const tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    return tmp.innerHTML;
   }
 
   /**
@@ -56,16 +77,22 @@ export default class MarkUp {
   }
 
   /**
-   * Basic sanitization to prevent XSS
-   * marked handles most cases but we add extra protection
+   * Basic sanitization to prevent XSS. Operates on the markdown source
+   * before rendering. Only acts inside HTML-tag-shaped fragments so prose
+   * containing words like "onset=" or the literal text "javascript:" in a
+   * sentence is left alone.
    */
   sanitize(text) {
-    // Remove script tags
+    // Strip <script>...</script> blocks anywhere.
     text = text.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
-    // Remove event handlers
-    text = text.replace(/\bon\w+\s*=/gi, '');
-    // Remove javascript: URLs
-    text = text.replace(/javascript:/gi, '');
+    // Within any HTML tag, remove on*= event-handler attributes and any
+    // javascript: protocol values. The replace callback scopes the inner
+    // regexes so they cannot match prose outside tags.
+    text = text.replace(/<[^>]*>/g, (tag) => {
+      tag = tag.replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '');
+      tag = tag.replace(/\b(href|src|xlink:href)\s*=\s*("javascript:[^"]*"|'javascript:[^']*'|javascript:[^\s>]+)/gi, '$1=""');
+      return tag;
+    });
     return text;
   }
 }
