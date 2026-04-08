@@ -377,14 +377,14 @@ function renderPost(post) {
       <div class="post-text">${markup ? markup.render(post.text) : mb.escapeHtml(post.text)}</div>
       ${imageHtml}
       <div class="post-actions">
-        <button class="post-action-btn" onclick="showCommentForm(${post.id})">💬 Comment</button>
-        ${currentUser && currentUser.address.toLowerCase() === post.author.toLowerCase() ? `<button class="post-action-btn" onclick="editPost(${post.id})">✏️ Edit</button>` : ''}
-        ${currentUser ? `<button class="post-action-btn delete" onclick="deletePost(${post.id})">🗑️ Delete</button>` : ''}
+        <button type="button" class="post-action-btn" onclick="event.preventDefault();showCommentForm(${post.id});return false;">💬 Comment</button>
+        ${currentUser && currentUser.address.toLowerCase() === post.author.toLowerCase() ? `<button type="button" class="post-action-btn" onclick="event.preventDefault();editPost(${post.id});return false;">✏️ Edit</button>` : ''}
+        ${currentUser ? `<button type="button" class="post-action-btn delete" onclick="event.preventDefault();deletePost(${post.id});return false;">🗑️ Delete</button>` : ''}
       </div>
       ${commentsHtml}
       <div class="comment-form" id="comment-form-${post.id}" style="display: none;">
-        <input type="text" id="comment-input-${post.id}" placeholder="Write a comment...">
-        <button onclick="addComment(${post.id})">Post</button>
+        <input type="text" id="comment-input-${post.id}" placeholder="Write a comment..." onkeydown="if(event.key==='Enter'){event.preventDefault();addComment(${post.id});}">
+        <button type="button" onclick="event.preventDefault();addComment(${post.id});return false;">Post</button>
       </div>
     </div>
   `;
@@ -412,7 +412,7 @@ function renderComment(postId, comment) {
           <div class="comment-header">
             <span class="comment-author">${authorDisplay}</span>
             <span class="comment-time">${timeAgo}</span>
-            <button class="comment-reply-btn" onclick="replyToComment(${postId}, '${replyHandle}')">Reply</button>
+            <button type="button" class="comment-reply-btn" onclick="event.preventDefault();replyToComment(${postId}, '${replyHandle}');return false;">Reply</button>
           </div>
           <div class="comment-text">${markup ? markup.render(comment.text) : mb.escapeHtml(comment.text)}</div>
         </div>

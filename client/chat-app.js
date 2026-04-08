@@ -290,14 +290,14 @@ function renderMessage(post) {
         <div class="message-text">${mb.markup ? mb.markup.render(post.text) : mb.escapeHtml(post.text)}</div>
         ${imageHtml}
         <div class="message-actions">
-          ${canComment ? `<button class="message-action-btn" onclick="window.showCommentForm(${post.id})">💬 Comment</button>` : ''}
-          ${canDelete ? `<button class="message-action-btn" onclick="window.deleteMessage(${post.id})">Delete</button>` : ''}
+          ${canComment ? `<button type="button" class="message-action-btn" onclick="event.preventDefault();window.showCommentForm(${post.id});return false;">💬 Comment</button>` : ''}
+          ${canDelete ? `<button type="button" class="message-action-btn" onclick="event.preventDefault();window.deleteMessage(${post.id});return false;">Delete</button>` : ''}
         </div>
         ${commentsHtml}
         ${canComment ? `
           <div class="comment-form" id="comment-form-${post.id}" style="display: none;">
             <input type="text" id="comment-input-${post.id}" placeholder="Write a comment..." onkeydown="if(event.key==='Enter'){event.preventDefault();window.addComment(${post.id});}">
-            <button onclick="window.addComment(${post.id})">Post</button>
+            <button type="button" onclick="event.preventDefault();window.addComment(${post.id});return false;">Post</button>
           </div>
         ` : ''}
       </div>
@@ -324,7 +324,7 @@ function renderComment(postId, comment) {
             <span class="comment-author">${mb.escapeHtml(authorDisplay)}</span>
             <span class="clickable-address" onclick="window.copyAddress('${comment.author}')" title="${comment.author}">${shortAddress}</span>
             <span class="comment-time">${timeAgo}</span>
-            ${canComment ? `<button class="comment-reply-btn" onclick="window.replyToComment(${postId}, '${replyHandle}')">Reply</button>` : ''}
+            ${canComment ? `<button type="button" class="comment-reply-btn" onclick="event.preventDefault();window.replyToComment(${postId}, '${replyHandle}');return false;">Reply</button>` : ''}
           </div>
           <div class="comment-text">${mb.markup ? mb.markup.render(comment.text) : mb.escapeHtml(comment.text)}</div>
         </div>
