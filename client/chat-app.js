@@ -247,6 +247,21 @@ function renderMessages() {
   const messages = [...mb.posts].reverse();
   container.innerHTML = messages.map(post => renderMessage(post)).join('');
 
+  // Populate post and comment text in isolation. Setting innerHTML on each
+  // element scopes the HTML parser to that element, so an unclosed tag from
+  // markdown rendering can't leak out and wrap the comment form (which would
+  // cause clicking the input to navigate as if it were inside an anchor).
+  for (const post of messages) {
+    const el = container.querySelector(`[data-post-text="${post.id}"]`);
+    if (el) el.innerHTML = mb.markup ? mb.markup.render(post.text) : mb.escapeHtml(post.text);
+    if (post.comments) {
+      for (const c of post.comments) {
+        const ce = container.querySelector(`[data-comment-text="${c.id}"]`);
+        if (ce) ce.innerHTML = mb.markup ? mb.markup.render(c.text) : mb.escapeHtml(c.text);
+      }
+    }
+  }
+
   // Re-open any forms that were open before the re-render and restore drafts.
   for (const postId of openCommentForms) {
     const form = document.getElementById(`comment-form-${postId}`);
@@ -287,7 +302,7 @@ function renderMessage(post) {
           <span class="clickable-address" onclick="window.copyAddress('${post.author}')" title="${post.author}">${shortAddress}</span>
           <span class="message-time">${timeAgo}</span>
         </div>
-        <div class="message-text">${mb.markup ? mb.markup.render(post.text) : mb.escapeHtml(post.text)}</div>
+        <div class="message-text" data-post-text="${post.id}"></div>
         ${imageHtml}
         <div class="message-actions">
           ${canComment ? `<button type="button" class="message-action-btn" onclick="event.preventDefault();window.showCommentForm(${post.id});return false;">💬 Comment</button>` : ''}
@@ -326,7 +341,7 @@ function renderComment(postId, comment) {
             <span class="comment-time">${timeAgo}</span>
             ${canComment ? `<button type="button" class="comment-reply-btn" onclick="event.preventDefault();window.replyToComment(${postId}, '${replyHandle}');return false;">Reply</button>` : ''}
           </div>
-          <div class="comment-text">${mb.markup ? mb.markup.render(comment.text) : mb.escapeHtml(comment.text)}</div>
+          <div class="comment-text" data-comment-text="${comment.id}"></div>
         </div>
       </div>
     </div>

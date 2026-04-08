@@ -327,6 +327,22 @@ function renderPosts() {
 
   container.innerHTML = posts.map(post => renderPost(post)).join('');
 
+  // Populate post and comment text in isolation. Setting innerHTML on each
+  // element scopes the HTML parser to that element, so an unclosed tag (e.g.
+  // a malformed markdown link producing a stray <a>) cannot leak out and
+  // wrap subsequent siblings — that bug had the comment form rendered as a
+  // child of an open anchor, making clicks navigate.
+  for (const post of posts) {
+    const el = container.querySelector(`[data-post-text="${post.id}"]`);
+    if (el) el.innerHTML = markup ? markup.render(post.text) : mb.escapeHtml(post.text);
+    if (post.comments) {
+      for (const c of post.comments) {
+        const ce = container.querySelector(`[data-comment-text="${c.id}"]`);
+        if (ce) ce.innerHTML = markup ? markup.render(c.text) : mb.escapeHtml(c.text);
+      }
+    }
+  }
+
   // Re-open any comment forms that were open before the re-render and restore drafts.
   for (const postId of openCommentForms) {
     const form = document.getElementById(`comment-form-${postId}`);
@@ -374,7 +390,7 @@ function renderPost(post) {
           </div>
         </div>
       </div>
-      <div class="post-text">${markup ? markup.render(post.text) : mb.escapeHtml(post.text)}</div>
+      <div class="post-text" data-post-text="${post.id}"></div>
       ${imageHtml}
       <div class="post-actions">
         <button type="button" class="post-action-btn" onclick="event.preventDefault();showCommentForm(${post.id});return false;">💬 Comment</button>
@@ -414,7 +430,7 @@ function renderComment(postId, comment) {
             <span class="comment-time">${timeAgo}</span>
             <button type="button" class="comment-reply-btn" onclick="event.preventDefault();replyToComment(${postId}, '${replyHandle}');return false;">Reply</button>
           </div>
-          <div class="comment-text">${markup ? markup.render(comment.text) : mb.escapeHtml(comment.text)}</div>
+          <div class="comment-text" data-comment-text="${comment.id}"></div>
         </div>
       </div>
     </div>
