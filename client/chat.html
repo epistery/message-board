@@ -10,6 +10,27 @@
       box-sizing: border-box;
     }
 
+    html, body {
+      max-width: 100%;
+      overflow-x: hidden;
+    }
+
+    /* CSS Grid: .console-layout's 1fr main column has min-width:auto by default,
+       so long content pushes the whole page wider. Force it to honor its track. */
+    .console-layout, .console-main {
+      min-width: 0;
+      min-height: 0;
+    }
+
+    .message, .message-content {
+      min-width: 0;
+    }
+
+    .message-text {
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+
     .chat-container {
       display: flex;
       flex-direction: column;

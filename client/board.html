@@ -17,6 +17,15 @@
       overflow-x: hidden;
     }
 
+    /* CSS Grid gotcha: grid items have min-width:auto by default, so the 1fr
+       main column in static.css's .console-layout grows to fit its content
+       instead of staying within its track. Force it to honor the track width
+       so .post and .post-text overflow rules can actually clip/wrap. */
+    .console-layout, .console-main {
+      min-width: 0;
+      min-height: 0;
+    }
+
     .board-main {
       max-width: 800px;
       margin: 0 auto;
