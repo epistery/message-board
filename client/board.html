@@ -394,11 +394,24 @@
 
     .comments {
       margin-top: var(--spacer);
+      margin-left: -16px;
       padding-top: var(--spacer);
       border-top: 1px solid var(--page-border);
     }
 
+    .comment-actions {
+      display: flex;
+      gap: var(--spacerhalf);
+      margin-left: auto;
+      opacity: 0;
+      transition: opacity 0.15s;
+    }
+    .comment:hover .comment-actions {
+      opacity: 1;
+    }
+
     .comment {
+      position: relative;
       padding: var(--spacer);
       background: var(--bg-color-quiet-d);
       border-radius: 6px;

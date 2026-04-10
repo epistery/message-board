@@ -393,9 +393,9 @@ function renderPost(post) {
       <div class="post-text" data-post-text="${post.id}"></div>
       ${imageHtml}
       <div class="post-actions">
-        <button type="button" class="post-action-btn" onclick="event.preventDefault();showCommentForm(${post.id});return false;">💬 Comment</button>
-        ${currentUser && currentUser.address.toLowerCase() === post.author.toLowerCase() ? `<button type="button" class="post-action-btn" onclick="event.preventDefault();editPost(${post.id});return false;">✏️ Edit</button>` : ''}
-        ${currentUser ? `<button type="button" class="post-action-btn delete" onclick="event.preventDefault();deletePost(${post.id});return false;">🗑️ Delete</button>` : ''}
+        <button type="button" class="post-action-btn icon icon-reply" title="Comment" aria-label="Comment" onclick="event.preventDefault();showCommentForm(${post.id});return false;"></button>
+        ${currentUser && currentUser.address.toLowerCase() === post.author.toLowerCase() ? `<button type="button" class="post-action-btn icon icon-edit" title="Edit" aria-label="Edit" onclick="event.preventDefault();editPost(${post.id});return false;"></button>` : ''}
+        ${currentUser ? `<button type="button" class="post-action-btn delete icon icon-trash" title="Delete" aria-label="Delete" onclick="event.preventDefault();deletePost(${post.id});return false;"></button>` : ''}
       </div>
       ${commentsHtml}
       <div class="comment-form" id="comment-form-${post.id}" style="display: none;">
@@ -413,22 +413,27 @@ function renderComment(postId, comment) {
   const shortAddress = comment.author.substring(0, 8) + '...' + comment.author.substring(comment.author.length - 6);
   const avatar = mb.generateAvatar(comment.author, 32);
 
-  // Format: "Name (0xShort...Address)" or just "(0xShort...Address)" if no name
   const authorDisplay = comment.authorName
     ? `${mb.escapeHtml(comment.authorName)} <span class="clickable-address" onclick="copyAddress('${comment.author}')" title="Click to copy full address">(${shortAddress})</span>`
     : `<span class="clickable-address" onclick="copyAddress('${comment.author}')" title="Click to copy full address">${shortAddress}</span>`;
 
   const replyHandle = (comment.authorName || shortAddress).replace(/'/g, "\\'");
+  const isOwn = currentUser && currentUser.address.toLowerCase() === comment.author.toLowerCase();
+  const canDelete = currentUser && (isOwn /* admin handled server-side */);
 
   return `
-    <div class="comment">
+    <div class="comment" data-comment-id="${comment.id}">
       <div class="comment-with-avatar">
         <img src="${avatar}" class="avatar avatar-small" alt="Avatar">
         <div class="comment-content">
           <div class="comment-header">
             <span class="comment-author">${authorDisplay}</span>
             <span class="comment-time">${timeAgo}</span>
-            <button type="button" class="comment-reply-btn" onclick="event.preventDefault();replyToComment(${postId}, '${replyHandle}');return false;">Reply</button>
+            <div class="comment-actions">
+              <button type="button" class="post-action-btn icon icon-reply" title="Reply" aria-label="Reply" onclick="event.preventDefault();replyToComment(${postId}, '${replyHandle}');return false;"></button>
+              ${isOwn ? `<button type="button" class="post-action-btn icon icon-edit" title="Edit" aria-label="Edit" onclick="event.preventDefault();editComment(${postId}, ${comment.id});return false;"></button>` : ''}
+              ${canDelete ? `<button type="button" class="post-action-btn delete icon icon-trash" title="Delete" aria-label="Delete" onclick="event.preventDefault();deleteComment(${postId}, ${comment.id});return false;"></button>` : ''}
+            </div>
           </div>
           <div class="comment-text" data-comment-text="${comment.id}"></div>
         </div>
@@ -436,6 +441,57 @@ function renderComment(postId, comment) {
     </div>
   `;
 }
+
+// Edit a comment inline — replace its text with a textarea
+window.editComment = function(postId, commentId) {
+  const post = posts.find(p => p.id === postId);
+  if (!post) return;
+  const comment = (post.comments || []).find(c => c.id === commentId);
+  if (!comment) return;
+  const commentEl = document.querySelector(`[data-comment-id="${commentId}"]`);
+  if (!commentEl) return;
+  const textEl = commentEl.querySelector('.comment-text');
+  const actionsEl = commentEl.querySelector('.comment-actions');
+  if (!textEl || !actionsEl) return;
+
+  textEl.innerHTML = `<textarea id="edit-comment-${commentId}" class="edit-textarea" rows="3" style="width:100%;font:inherit;"></textarea>`;
+  document.getElementById(`edit-comment-${commentId}`).value = comment.text;
+  actionsEl.innerHTML = `
+    <button type="button" class="post-action-btn icon icon-save" title="Save" aria-label="Save" onclick="event.preventDefault();saveCommentEdit(${postId}, ${commentId});return false;"></button>
+    <button type="button" class="post-action-btn icon icon-cross" title="Cancel" aria-label="Cancel" onclick="event.preventDefault();cancelCommentEdit();return false;"></button>
+  `;
+  const ta = document.getElementById(`edit-comment-${commentId}`);
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+};
+
+window.saveCommentEdit = async function(postId, commentId) {
+  const ta = document.getElementById(`edit-comment-${commentId}`);
+  if (!ta) return;
+  const text = ta.value.trim();
+  if (!text) {
+    showError('Comment cannot be empty');
+    return;
+  }
+  try {
+    await mb.editComment(postId, commentId, text);
+  } catch (error) {
+    console.error('[message-board] Edit comment error:', error);
+    showError(error.message);
+  }
+};
+
+window.deleteComment = async function(postId, commentId) {
+  if (!confirm('Delete this comment?')) return;
+  try {
+    await mb.deleteComment(postId, commentId);
+  } catch (error) {
+    console.error('[message-board] Delete comment error:', error);
+    showError(error.message);
+  }
+};
+
+window.cancelCommentEdit = function() { renderPosts(); };
 
 // Reply to a comment — still attaches to the original post (one level deep)
 window.replyToComment = function(postId, handle) {
@@ -559,8 +615,8 @@ window.editPost = function(postId) {
 
   // Replace actions with save/cancel
   postActionsDiv.innerHTML = `
-    <button class="post-action-btn" onclick="saveEdit(${postId})">Save</button>
-    <button class="post-action-btn" onclick="cancelEdit(${postId})">Cancel</button>
+    <button type="button" class="post-action-btn icon icon-save" title="Save" aria-label="Save" onclick="event.preventDefault();saveEdit(${postId});return false;"></button>
+    <button type="button" class="post-action-btn icon icon-cross" title="Cancel" aria-label="Cancel" onclick="event.preventDefault();cancelEdit(${postId});return false;"></button>
   `;
 
   // Focus the textarea
@@ -811,6 +867,30 @@ function handleWebSocketMessage(message) {
         renderPosts();
       }
       break;
+
+    case 'edit-comment': {
+      const p = posts.find(p => p.id === message.postId);
+      if (p && Array.isArray(p.comments)) {
+        const c = p.comments.find(c => c.id === message.comment.id);
+        if (c) {
+          c.text = message.comment.text;
+          c.editedAt = message.comment.editedAt;
+          savePosts();
+          renderPosts();
+        }
+      }
+      break;
+    }
+
+    case 'delete-comment': {
+      const p = posts.find(p => p.id === message.postId);
+      if (p && Array.isArray(p.comments)) {
+        p.comments = p.comments.filter(c => c.id !== message.commentId);
+        savePosts();
+        renderPosts();
+      }
+      break;
+    }
   }
 }
 

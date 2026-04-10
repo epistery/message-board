@@ -380,6 +380,21 @@
       gap: var(--spacerhalf);
     }
 
+    .comment {
+      position: relative;
+    }
+
+    .comment-actions {
+      display: flex;
+      gap: var(--spacerhalf);
+      margin-left: auto;
+      opacity: 0;
+      transition: opacity 0.15s;
+    }
+    .comment:hover .comment-actions {
+      opacity: 1;
+    }
+
     .comment-with-avatar {
       display: flex;
       gap: var(--spacerhalf);

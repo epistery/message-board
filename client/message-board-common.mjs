@@ -297,7 +297,67 @@ export class MessageBoardCommon {
           this.onPostsUpdated && this.onPostsUpdated();
         }
         break;
+
+      case 'edit-comment': {
+        const post = this.posts.find(p => p.id === message.postId);
+        if (post && Array.isArray(post.comments)) {
+          const c = post.comments.find(c => c.id === message.comment.id);
+          if (c) {
+            c.text = message.comment.text;
+            c.editedAt = message.comment.editedAt;
+            this.savePosts();
+            this.onPostsUpdated && this.onPostsUpdated();
+          }
+        }
+        break;
+      }
+
+      case 'delete-comment': {
+        const post = this.posts.find(p => p.id === message.postId);
+        if (post && Array.isArray(post.comments)) {
+          post.comments = post.comments.filter(c => c.id !== message.commentId);
+          this.savePosts();
+          this.onPostsUpdated && this.onPostsUpdated();
+        }
+        break;
+      }
     }
+  }
+
+  // Edit a comment
+  async editComment(postId, commentId, text) {
+    const response = await fetch(`/agent/epistery/message-board/api/posts/${postId}/comments/${commentId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ text: text.trim() })
+    });
+    if (!response.ok) {
+      const ct = response.headers.get('content-type');
+      if (ct && ct.includes('application/json')) {
+        const err = await response.json();
+        throw new Error(err.error || 'Failed to update comment');
+      }
+      throw new Error(`Failed to update comment (${response.status})`);
+    }
+    await this.loadPosts();
+  }
+
+  // Delete a comment
+  async deleteComment(postId, commentId) {
+    const response = await fetch(`/agent/epistery/message-board/api/posts/${postId}/comments/${commentId}`, {
+      method: 'DELETE',
+      credentials: 'include'
+    });
+    if (!response.ok) {
+      const ct = response.headers.get('content-type');
+      if (ct && ct.includes('application/json')) {
+        const err = await response.json();
+        throw new Error(err.error || 'Failed to delete comment');
+      }
+      throw new Error(`Failed to delete comment (${response.status})`);
+    }
+    await this.loadPosts();
   }
 
   // Process and normalize uploaded images

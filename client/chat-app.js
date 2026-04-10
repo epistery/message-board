@@ -284,8 +284,11 @@ function renderMessage(post) {
     ? `<img src="${post.image}" class="message-image" alt="Attached image">`
     : '';
 
+  const isOwnMessage = mb.currentUser &&
+    mb.currentUser.address.toLowerCase() === post.author.toLowerCase();
   const canDelete = mb.currentUser &&
-    (mb.currentUser.address.toLowerCase() === post.author.toLowerCase() || mb.permissions.admin);
+    (isOwnMessage || mb.permissions.admin);
+  const canEdit = isOwnMessage;
 
   const commentsHtml = post.comments && post.comments.length > 0
     ? `<div class="comments">${post.comments.map(c => renderComment(post.id, c)).join('')}</div>`
@@ -305,8 +308,9 @@ function renderMessage(post) {
         <div class="message-text" data-post-text="${post.id}"></div>
         ${imageHtml}
         <div class="message-actions">
-          ${canComment ? `<button type="button" class="message-action-btn" onclick="event.preventDefault();window.showCommentForm(${post.id});return false;">💬 Comment</button>` : ''}
-          ${canDelete ? `<button type="button" class="message-action-btn" onclick="event.preventDefault();window.deleteMessage(${post.id});return false;">Delete</button>` : ''}
+          ${canComment ? `<button type="button" class="message-action-btn icon icon-reply" title="Comment" aria-label="Comment" onclick="event.preventDefault();window.showCommentForm(${post.id});return false;"></button>` : ''}
+          ${canEdit ? `<button type="button" class="message-action-btn icon icon-edit" title="Edit" aria-label="Edit" onclick="event.preventDefault();window.editMessage(${post.id});return false;"></button>` : ''}
+          ${canDelete ? `<button type="button" class="message-action-btn icon icon-trash" title="Delete" aria-label="Delete" onclick="event.preventDefault();window.deleteMessage(${post.id});return false;"></button>` : ''}
         </div>
         ${commentsHtml}
         ${canComment ? `
@@ -329,9 +333,10 @@ function renderComment(postId, comment) {
   const authorDisplay = comment.authorName || shortAddress;
   const canComment = mb.permissions && mb.permissions.edit;
   const replyHandle = (comment.authorName || shortAddress).replace(/'/g, "\\'");
+  const isOwn = mb.currentUser && mb.currentUser.address.toLowerCase() === comment.author.toLowerCase();
 
   return `
-    <div class="comment">
+    <div class="comment" data-comment-id="${comment.id}">
       <div class="comment-with-avatar">
         <img src="${avatar}" class="avatar avatar-small" alt="Avatar">
         <div class="comment-content">
@@ -339,7 +344,11 @@ function renderComment(postId, comment) {
             <span class="comment-author">${mb.escapeHtml(authorDisplay)}</span>
             <span class="clickable-address" onclick="window.copyAddress('${comment.author}')" title="${comment.author}">${shortAddress}</span>
             <span class="comment-time">${timeAgo}</span>
-            ${canComment ? `<button type="button" class="comment-reply-btn" onclick="event.preventDefault();window.replyToComment(${postId}, '${replyHandle}');return false;">Reply</button>` : ''}
+            <div class="comment-actions">
+              ${canComment ? `<button type="button" class="message-action-btn icon icon-reply" title="Reply" aria-label="Reply" onclick="event.preventDefault();window.replyToComment(${postId}, '${replyHandle}');return false;"></button>` : ''}
+              ${isOwn ? `<button type="button" class="message-action-btn icon icon-edit" title="Edit" aria-label="Edit" onclick="event.preventDefault();window.editComment(${postId}, ${comment.id});return false;"></button>` : ''}
+              ${isOwn ? `<button type="button" class="message-action-btn icon icon-trash" title="Delete" aria-label="Delete" onclick="event.preventDefault();window.deleteComment(${postId}, ${comment.id});return false;"></button>` : ''}
+            </div>
           </div>
           <div class="comment-text" data-comment-text="${comment.id}"></div>
         </div>
@@ -347,6 +356,57 @@ function renderComment(postId, comment) {
     </div>
   `;
 }
+
+// Edit a comment inline
+window.editComment = function(postId, commentId) {
+  const post = mb.posts.find(p => p.id === postId);
+  if (!post) return;
+  const comment = (post.comments || []).find(c => c.id === commentId);
+  if (!comment) return;
+  const commentEl = document.querySelector(`[data-comment-id="${commentId}"]`);
+  if (!commentEl) return;
+  const textEl = commentEl.querySelector('.comment-text');
+  const actionsEl = commentEl.querySelector('.comment-actions');
+  if (!textEl || !actionsEl) return;
+
+  textEl.innerHTML = `<textarea id="edit-comment-${commentId}" class="edit-textarea" rows="3" style="width:100%;font:inherit;"></textarea>`;
+  document.getElementById(`edit-comment-${commentId}`).value = comment.text;
+  actionsEl.innerHTML = `
+    <button type="button" class="message-action-btn icon icon-save" title="Save" aria-label="Save" onclick="event.preventDefault();window.saveCommentEdit(${postId}, ${commentId});return false;"></button>
+    <button type="button" class="message-action-btn icon icon-cross" title="Cancel" aria-label="Cancel" onclick="event.preventDefault();window.cancelCommentEdit();return false;"></button>
+  `;
+  const ta = document.getElementById(`edit-comment-${commentId}`);
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+};
+
+window.saveCommentEdit = async function(postId, commentId) {
+  const ta = document.getElementById(`edit-comment-${commentId}`);
+  if (!ta) return;
+  const text = ta.value.trim();
+  if (!text) {
+    showError('Comment cannot be empty');
+    return;
+  }
+  try {
+    await mb.editComment(postId, commentId, text);
+  } catch (error) {
+    console.error('[chat] Edit comment error:', error);
+    showError(error.message);
+  }
+};
+
+window.deleteComment = async function(postId, commentId) {
+  if (!confirm('Delete this comment?')) return;
+  try {
+    await mb.deleteComment(postId, commentId);
+  } catch (error) {
+    console.error('[chat] Delete comment error:', error);
+    showError(error.message);
+  }
+};
+
+window.cancelCommentEdit = function() { renderMessages(); };
 
 // Show / hide the comment form
 window.showCommentForm = function(postId) {
@@ -397,6 +457,64 @@ window.addComment = async function(postId) {
     console.error('[chat] Comment error:', error);
     showError(error.message);
   }
+};
+
+// Edit message — replace the message text with an inline textarea
+window.editMessage = function(postId) {
+  const post = mb.posts.find(p => p.id === postId);
+  if (!post) return;
+  const messageEl = document.querySelector(`[data-message-id="${postId}"]`);
+  if (!messageEl) return;
+  const textEl = messageEl.querySelector('.message-text');
+  const actionsEl = messageEl.querySelector('.message-actions');
+  if (!textEl || !actionsEl) return;
+
+  textEl.innerHTML = `<textarea id="edit-textarea-${postId}" class="edit-textarea" rows="3" style="width:100%;font:inherit;"></textarea>`;
+  const ta = document.getElementById(`edit-textarea-${postId}`);
+  ta.value = post.text;
+
+  actionsEl.innerHTML = `
+    <button type="button" class="message-action-btn icon icon-save" title="Save" aria-label="Save" onclick="event.preventDefault();window.saveEdit(${postId});return false;"></button>
+    <button type="button" class="message-action-btn icon icon-cross" title="Cancel" aria-label="Cancel" onclick="event.preventDefault();window.cancelEdit(${postId});return false;"></button>
+  `;
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+};
+
+window.saveEdit = async function(postId) {
+  const ta = document.getElementById(`edit-textarea-${postId}`);
+  if (!ta) return;
+  const text = ta.value.trim();
+  if (!text) {
+    showError('Message cannot be empty');
+    return;
+  }
+  try {
+    const response = await fetch(`/agent/epistery/message-board/api/posts/${postId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ text })
+    });
+    if (!response.ok) {
+      const ct = response.headers.get('content-type');
+      if (ct && ct.includes('application/json')) {
+        const err = await response.json();
+        throw new Error(err.error || 'Failed to update message');
+      }
+      throw new Error(`Failed to update message (${response.status})`);
+    }
+    const post = mb.posts.find(p => p.id === postId);
+    if (post) post.text = text;
+    renderMessages();
+  } catch (error) {
+    console.error('[chat] Edit error:', error);
+    showError(error.message);
+  }
+};
+
+window.cancelEdit = function() {
+  renderMessages();
 };
 
 // Delete message

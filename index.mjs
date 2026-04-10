@@ -947,6 +947,80 @@ export default class MessageBoardAgent {
       }
     });
 
+    // Edit a comment (author only)
+    router.patch('/api/posts/:id/comments/:cid', async (req, res) => {
+      try {
+        const postId = parseInt(req.params.id);
+        const commentId = parseInt(req.params.cid);
+        const { text } = req.body;
+
+        if (!text || text.trim().length === 0) {
+          return res.status(400).json({ error: 'Text is required' });
+        }
+        if (!req.episteryClient) {
+          return res.status(401).json({ error: 'Authentication required' });
+        }
+        const userAddress = req.episteryClient.address;
+        const data = await this.readData(req.domain);
+        const post = data.posts.find(p => p.id === postId);
+        if (!post) return res.status(404).json({ error: 'Post not found' });
+
+        const comment = (post.comments || []).find(c => c.id === commentId);
+        if (!comment) return res.status(404).json({ error: 'Comment not found' });
+
+        if (comment.author.toLowerCase() !== userAddress.toLowerCase()) {
+          return res.status(403).json({ error: 'Only the author can edit this comment' });
+        }
+
+        comment.text = text.trim();
+        comment.editedAt = Date.now();
+
+        await this.writePost(req.domain, post);
+        await this.writeData(req.domain, data);
+
+        this.broadcast({ type: 'edit-comment', postId, comment }, req.domain);
+        res.json(comment);
+      } catch (error) {
+        console.error('[message-board] Edit comment error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Delete a comment (author or admin)
+    router.delete('/api/posts/:id/comments/:cid', async (req, res) => {
+      try {
+        const postId = parseInt(req.params.id);
+        const commentId = parseInt(req.params.cid);
+        if (!req.episteryClient) {
+          return res.status(401).json({ error: 'Authentication required' });
+        }
+        const userAddress = req.episteryClient.address;
+        const data = await this.readData(req.domain);
+        const post = data.posts.find(p => p.id === postId);
+        if (!post) return res.status(404).json({ error: 'Post not found' });
+
+        const idx = (post.comments || []).findIndex(c => c.id === commentId);
+        if (idx === -1) return res.status(404).json({ error: 'Comment not found' });
+
+        const comment = post.comments[idx];
+        const isAuthor = comment.author.toLowerCase() === userAddress.toLowerCase();
+        const adminPermission = await this.checkAdminPermission(req);
+        if (!isAuthor && !adminPermission.allowed) {
+          return res.status(403).json({ error: 'You can only delete your own comments unless you are an admin' });
+        }
+
+        post.comments.splice(idx, 1);
+        await this.writePost(req.domain, post);
+        await this.writeData(req.domain, data);
+
+        this.broadcast({ type: 'delete-comment', postId, commentId }, req.domain);
+        res.json({ success: true });
+      } catch (error) {
+        console.error('[message-board] Delete comment error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
     // API endpoint to get links
     router.get('/api/links', async (req, res) => {
       try {
