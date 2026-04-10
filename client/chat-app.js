@@ -187,7 +187,7 @@ async function sendMessage() {
   const previewContainer = document.getElementById('image-preview-container');
 
   const text = messageInput.value.trim();
-  if (!text) return;
+  if (!text && !currentImageDataUrl) return;
 
   sendButton.disabled = true;
   sendButton.textContent = 'Sending...';
@@ -281,7 +281,7 @@ function renderMessage(post) {
   const authorDisplay = post.authorName || shortAddress;
 
   const imageHtml = post.image
-    ? `<img src="${post.image}" class="message-image" alt="Attached image">`
+    ? `<a href="${post.image}" target="_blank"><img src="${post.image}" class="message-image" alt="Attached image"></a>`
     : '';
 
   const isOwnMessage = mb.currentUser &&
@@ -315,7 +315,7 @@ function renderMessage(post) {
         ${commentsHtml}
         ${canComment ? `
           <div class="comment-form" id="comment-form-${post.id}" style="display: none;">
-            <input type="text" id="comment-input-${post.id}" placeholder="Write a comment..." onkeydown="if(event.key==='Enter'){event.preventDefault();window.addComment(${post.id});}">
+            <textarea id="comment-input-${post.id}" placeholder="Write a comment..." rows="2" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();window.addComment(${post.id});}"></textarea>
             <button type="button" onclick="event.preventDefault();window.addComment(${post.id});return false;">Post</button>
           </div>
         ` : ''}
@@ -564,9 +564,6 @@ function scrollToBottom() {
   }
 }
 
-// Start app when DOM is ready
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', init);
-} else {
-  init();
-}
+// Start app after epistery session is established (common.js dispatches this)
+// This ensures the _epistery cookie exists before we check auth status
+document.addEventListener('epistery-ready', init, { once: true });

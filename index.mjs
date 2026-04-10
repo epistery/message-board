@@ -671,9 +671,8 @@ export default class MessageBoardAgent {
 
         const { text, image, channel } = req.body;
 
-        //TODO: Text is not required if an image is attached
-        if (!text || text.trim().length === 0) {
-          return res.status(400).json({ error: 'Text is required' });
+        if ((!text || text.trim().length === 0) && !image) {
+          return res.status(400).json({ error: 'Text or image is required' });
         }
 
         // Validate channel if provided

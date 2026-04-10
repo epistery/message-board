@@ -27,10 +27,8 @@ async function init() {
   handleHashChange();
   window.addEventListener('hashchange', handleHashChange);
 
-  // Ensure wallet exists (auto-create if needed)
-  await ensureWallet();
-
   // Check authentication status (also loads posts and connects WS if authorized)
+  // Note: common.js already ran Witness.connect() before dispatching epistery-ready
   await checkAuthStatus();
 
   // Setup event listeners
@@ -368,7 +366,7 @@ function renderPost(post) {
     : '';
 
   const imageHtml = post.image
-    ? `<img src="${post.image}" class="post-image" alt="Post image">`
+    ? `<a href="${post.image}" target="_blank"><img src="${post.image}" class="post-image" alt="Post image"></a>`
     : '';
 
   const pendingStyle = post.pending ? 'opacity: 0.7;' : '';
@@ -399,7 +397,7 @@ function renderPost(post) {
       </div>
       ${commentsHtml}
       <div class="comment-form" id="comment-form-${post.id}" style="display: none;">
-        <input type="text" id="comment-input-${post.id}" placeholder="Write a comment..." onkeydown="if(event.key==='Enter'){event.preventDefault();addComment(${post.id});}">
+        <textarea id="comment-input-${post.id}" placeholder="Write a comment..." rows="2" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();addComment(${post.id});}"></textarea>
         <button type="button" onclick="event.preventDefault();addComment(${post.id});return false;">Post</button>
       </div>
     </div>
@@ -729,7 +727,8 @@ async function createPost() {
   const postButton = document.getElementById('post-button');
 
   const text = postText.value.trim();
-  if (!text) return;
+  const hasImage = imagePreview.style.display !== 'none' && imagePreview.src;
+  if (!text && !hasImage) return;
 
   postButton.disabled = true;
   postButton.textContent = 'Posting...';
@@ -737,7 +736,7 @@ async function createPost() {
   try {
     const body = {
       text,
-      image: imagePreview.style.display !== 'none' ? imagePreview.src : null,
+      image: hasImage ? imagePreview.src : null,
       channel: currentChannel && currentChannel !== 'general' ? currentChannel : null
     };
 
@@ -995,9 +994,6 @@ async function requestAccess(address, customMessage, customName) {
   return result;
 }
 
-// Start app when DOM is ready
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', init);
-} else {
-  init();
-}
+// Start app after epistery session is established (common.js dispatches this)
+// This ensures the _epistery cookie exists before we check auth status
+document.addEventListener('epistery-ready', init, { once: true });

@@ -116,7 +116,7 @@ export class MessageBoardCommon {
   async createPost(text, imageDataUrl, channel) {
     try {
       const body = {
-        text: text.trim(),
+        text: text ? text.trim() : '',
         image: imageDataUrl || null,
         channel: channel || null
       };
