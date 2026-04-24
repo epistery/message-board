@@ -7,13 +7,47 @@
   "main": "index.mjs",
   "icon": "/agent/epistery/message-board/icon.svg",
   "widget": "/agent/epistery/message-board/widget",
-  "permissions": [
-    "whitelist:read",
-    "delegation:verify"
-  ],
   "config": {
     "minNotabotPoints": 10,
     "postingList": "message-board::posting",
     "moderatorList": "message-board::moderators"
-  }
+  },
+  "tools": [
+    {
+      "name": "message_channels",
+      "scope": "messages:read",
+      "description": "List available message board channels. Returns channels the caller has access to.",
+      "method": "GET",
+      "path": "/api/channels",
+      "inputSchema": { "type": "object", "properties": {} }
+    },
+    {
+      "name": "message_list",
+      "scope": "messages:read",
+      "description": "List message board posts. Optionally filter by channel.",
+      "method": "GET",
+      "path": "/api/posts",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "channel": { "type": "string", "description": "Channel name to filter by (e.g. 'general'). Omit for all channels." }
+        }
+      }
+    },
+    {
+      "name": "message_post",
+      "scope": "messages:write",
+      "description": "Post a message to the message board.",
+      "method": "POST",
+      "path": "/api/posts",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "text": { "type": "string", "description": "Message content" },
+          "channel": { "type": "string", "description": "Channel to post to (default: 'general')" }
+        },
+        "required": ["text"]
+      }
+    }
+  ]
 }

@@ -567,7 +567,7 @@ export default class MessageBoardAgent {
           return res.status(401).json({ error: 'Authentication required' });
         }
 
-        const vault = await req.userVault.get();
+        const vault = await req.userVault.getShared();
         const lastRead = vault.messageBoard?.lastRead || {};
 
         const data = await this.readData(req.domain);
@@ -598,13 +598,13 @@ export default class MessageBoardAgent {
         }
 
         const channelName = req.params.name;
-        const vault = await req.userVault.get();
+        const vault = await req.userVault.getShared();
 
         if (!vault.messageBoard) vault.messageBoard = {};
         if (!vault.messageBoard.lastRead) vault.messageBoard.lastRead = {};
         vault.messageBoard.lastRead[channelName] = Date.now();
 
-        await req.userVault.set(vault);
+        await req.userVault.setShared(vault);
         res.json({ success: true });
       } catch (error) {
         console.error('[message-board] Mark read error:', error);

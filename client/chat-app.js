@@ -5,13 +5,22 @@ const mb = new MessageBoardCommon();
 let currentImageDataUrl = null;
 let currentChannel = null;
 let channels = [];
+let unreadCounts = {};
 
 // Initialize
 async function init() {
   await mb.init();
 
-  // Set up callback for post updates
+  // Set up callbacks for post updates and unread tracking
   mb.onPostsUpdated = renderMessages;
+  mb.onChannelActivity = (channel) => {
+    if (channel !== currentChannel) {
+      unreadCounts[channel] = (unreadCounts[channel] || 0) + 1;
+      renderChannels();
+    } else {
+      markChannelRead(currentChannel);
+    }
+  };
 
   // Load channels
   await loadChannels();
@@ -22,6 +31,12 @@ async function init() {
 
   // Setup event listeners
   setupEventListeners();
+
+  // Load unread counts and mark current channel read
+  await loadUnreadCounts();
+  if (currentChannel) {
+    markChannelRead(currentChannel);
+  }
 
   // Initial render
   renderMessages();
@@ -53,6 +68,34 @@ async function loadChannels() {
   }
 }
 
+// Load unread counts from server
+async function loadUnreadCounts() {
+  try {
+    const response = await fetch('/agent/epistery/message-board/api/unread');
+    if (response.ok) {
+      unreadCounts = await response.json();
+      renderChannels();
+    }
+  } catch (error) {
+    console.error('[chat] Failed to load unread counts:', error);
+  }
+}
+
+// Mark a channel as read
+function markChannelRead(channelName) {
+  unreadCounts[channelName] = 0;
+  renderChannels();
+
+  try {
+    fetch(`/agent/epistery/message-board/api/channels/${encodeURIComponent(channelName)}/read`, {
+      method: 'POST',
+      credentials: 'include'
+    });
+  } catch {
+    // fire-and-forget
+  }
+}
+
 // Render channels in sidebar
 function renderChannels() {
   const container = document.getElementById('channels-list');
@@ -63,13 +106,19 @@ function renderChannels() {
     return;
   }
 
-  container.innerHTML = channels.map(channel => `
+  container.innerHTML = channels.map(channel => {
+    const count = unreadCounts[channel.name] || 0;
+    const badge = count > 0 ? `<span class="unread-badge">${count}</span>` : '';
+    const bold = count > 0 ? 'font-weight:bold' : '';
+    return `
     <li class="sidebar-link">
-      <a href="#" class="${currentChannel === channel.name ? 'active' : ''}" onclick="window.selectChannel('${channel.name}'); return false;">
-        # ${escapeHtml(channel.name)}
+      <a href="#" class="${currentChannel === channel.name ? 'active' : ''}" style="${bold}" onclick="window.selectChannel('${channel.name}'); return false;">
+        <span># ${escapeHtml(channel.name)}</span>
+        ${badge}
       </a>
     </li>
-  `).join('');
+  `;
+  }).join('');
 
   // Update header
   const header = document.querySelector('.chat-header h1');
@@ -116,6 +165,9 @@ window.selectChannel = async function(channelName) {
   await mb.loadPosts();
   renderMessages();
   scrollToBottom();
+
+  // Mark as read
+  markChannelRead(channelName);
 }
 
 function escapeHtml(text) {

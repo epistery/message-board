@@ -200,9 +200,10 @@ function renderChannels() {
   container.innerHTML = channels.map(channel => {
     const count = unreadCounts[channel.name] || 0;
     const badge = count > 0 ? `<span class="unread-badge">${count}</span>` : '';
+    const bold = count > 0 ? 'font-weight:bold' : '';
     return `
     <li class="sidebar-link">
-      <a href="#${channel.name === 'general' ? '' : channel.name}" class="${currentChannel === channel.name ? 'active' : ''}">
+      <a href="#${channel.name === 'general' ? '' : channel.name}" class="${currentChannel === channel.name ? 'active' : ''}" style="${bold}">
         <span># ${mb.escapeHtml(channel.name)}</span>
         ${badge}
       </a>
@@ -823,12 +824,14 @@ function handleWebSocketMessage(message) {
       }
       savePosts();
       renderPosts();
-      // Increment unread if post is in a different channel
+      // Increment unread if post is in a different channel, otherwise keep vault in sync
       {
         const postChannel = message.post.channel || 'general';
         if (postChannel !== currentChannel) {
           unreadCounts[postChannel] = (unreadCounts[postChannel] || 0) + 1;
           renderChannels();
+        } else {
+          markChannelRead(currentChannel);
         }
       }
       break;
@@ -842,11 +845,13 @@ function handleWebSocketMessage(message) {
         }
         savePosts();
         renderPosts();
-        // Increment unread if comment is in a different channel
+        // Increment unread if comment is in a different channel, otherwise keep vault in sync
         const commentChannel = post.channel || 'general';
         if (commentChannel !== currentChannel) {
           unreadCounts[commentChannel] = (unreadCounts[commentChannel] || 0) + 1;
           renderChannels();
+        } else {
+          markChannelRead(currentChannel);
         }
       }
       break;

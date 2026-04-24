@@ -254,6 +254,7 @@ export class MessageBoardCommon {
         }
         this.savePosts();
         this.onPostsUpdated && this.onPostsUpdated();
+        this.onChannelActivity && this.onChannelActivity(message.post.channel || 'general');
         break;
 
       case 'new-comment':
@@ -279,6 +280,7 @@ export class MessageBoardCommon {
           }
           this.savePosts();
           this.onPostsUpdated && this.onPostsUpdated();
+          this.onChannelActivity && this.onChannelActivity(post.channel || 'general');
         }
         break;
 

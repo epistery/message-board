@@ -347,13 +347,27 @@
     }
 
     .sidebar-link a {
-      display: block;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
       padding: var(--spacerhalf) var(--spacer);
       color: var(--text-color);
       text-decoration: none;
       border-radius: 4px;
       font-size: 0.9em;
       transition: all 0.2s;
+    }
+
+    .unread-badge {
+      background: var(--rust-mid);
+      color: white;
+      font-size: 0.7em;
+      padding: 1px 6px;
+      border-radius: 10px;
+      margin-left: 0.5em;
+      font-weight: 600;
+      min-width: 1.2em;
+      text-align: center;
     }
 
     .sidebar-link a:hover {
