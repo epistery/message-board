@@ -140,7 +140,7 @@ export default class MessageBoardAgent {
     }
 
     try {
-      const access = await req.domainAcl.checkAgentAccess('@epistery/message-board', client.address, req.hostname);
+      const access = await req.domainAcl.checkAgentAccess('epistery/message-board', client.address, req.hostname);
       result.admin = access.level >= 3;
       result.edit = access.level >= 2;
       result.read = access.level >= 1;
@@ -328,7 +328,7 @@ export default class MessageBoardAgent {
         if (req.episteryClient && req.episteryClient.address) {
           // Check user's access level to message-board
           const access = await req.domainAcl.checkAgentAccess(
-            '@epistery/message-board',
+            'epistery/message-board',
             req.episteryClient.address,
             req.hostname
           );
@@ -1142,7 +1142,7 @@ export default class MessageBoardAgent {
     console.log(`[message-board] Checking permissions for ${address}`);
 
     try {
-      const access = await req.domainAcl.checkAgentAccess('@epistery/message-board', address, req.hostname);
+      const access = await req.domainAcl.checkAgentAccess('epistery/message-board', address, req.hostname);
       console.log(`[message-board] Access level for ${address}: ${access.level}`);
 
       // Level 2 (editor) or higher can post
@@ -1224,7 +1224,7 @@ export default class MessageBoardAgent {
 
     if (req.episteryClient && req.episteryClient.address) {
       const access = await req.domainAcl.checkAgentAccess(
-        '@epistery/message-board', req.episteryClient.address, req.hostname
+        'epistery/message-board', req.episteryClient.address, req.hostname
       );
       if (access.level >= 3) {
         channels.forEach(ch => accessible.add(ch.name));
@@ -1254,7 +1254,7 @@ export default class MessageBoardAgent {
     const address = req.episteryClient.address;
 
     try {
-      const access = await req.domainAcl.checkAgentAccess('@epistery/message-board', address, req.hostname);
+      const access = await req.domainAcl.checkAgentAccess('epistery/message-board', address, req.hostname);
 
       // Level 3 (admin) required
       if (access.level >= 3) {

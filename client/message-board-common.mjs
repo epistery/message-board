@@ -29,7 +29,7 @@ export class MessageBoardCommon {
   // Check authentication and update UI
   async checkAuthStatus() {
     try {
-      const response = await fetch('/api/acl/check-access?agent=' + encodeURIComponent('@epistery/message-board'));
+      const response = await fetch('/api/acl/check-access?agent=' + encodeURIComponent('epistery/message-board'));
       if (!response.ok) {
         throw new Error('Failed to check access');
       }
