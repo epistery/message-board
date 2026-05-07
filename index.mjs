@@ -73,10 +73,11 @@ export default class MessageBoardAgent {
       throw new Error('Server wallet or provider not configured');
     }
 
-    // Load DomainAgent artifact from epistery-host
-    const DomainAgentArtifact = JSON.parse(
-      readFileSync(path.join(__dirname, '../epistery-host/artifacts/contracts/DomainAgent.sol/DomainAgent.json'), 'utf8')
-    );
+    // Get DomainAgent artifact from host services (injected by AgentManager)
+    const DomainAgentArtifact = this.manifestConfig?.host?.contractArtifact;
+    if (!DomainAgentArtifact) {
+      throw new Error('Contract artifact not available from host');
+    }
 
     const ethersProvider = new ethers.providers.JsonRpcProvider(provider.rpc);
     const wallet = ethers.Wallet.fromMnemonic(serverWallet.mnemonic).connect(ethersProvider);
