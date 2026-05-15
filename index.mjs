@@ -157,6 +157,66 @@ export default class MessageBoardAgent {
    *
    * @param {express.Router} router - Express router instance
    */
+
+  // ── feeds-spec-v0 contribution interface ──
+  //
+  // ai-discovery aggregates these into /.well-known/ai/feeds and normalizes
+  // posts into the spec envelope. Channels marked `feed: true` (or with a
+  // `feed` string id) are exposed as feeds; others remain ACL-gated and
+  // invisible to feed consumers.
+
+  // Per-domain list of feed declarations this agent publishes.
+  async aiFeeds(domain) {
+    const config = this.getDomainConfig(domain);
+    const channels = (config.data?.messageBoard?.channels || [])
+      .map(c => typeof c === 'string' ? JSON.parse(c) : c)
+      .filter(Boolean);
+    const feeds = [];
+    for (const ch of channels) {
+      if (!ch.feed) continue;
+      const id = typeof ch.feed === 'string' ? ch.feed : ch.name;
+      feeds.push({
+        id,
+        title: ch.title || ch.name,
+        default: !!ch.defaultFeed
+      });
+    }
+    return feeds;
+  }
+
+  // Raw posts for a feed id, in this agent's native shape. ai-discovery
+  // computes content-hash ids and wraps in the envelope.
+  async aiFeedPosts(domain, feedId, params = {}) {
+    const config = this.getDomainConfig(domain);
+    const channels = (config.data?.messageBoard?.channels || [])
+      .map(c => typeof c === 'string' ? JSON.parse(c) : c)
+      .filter(Boolean);
+    const decl = channels.find(c => {
+      if (!c.feed) return false;
+      const id = typeof c.feed === 'string' ? c.feed : c.name;
+      return id === feedId;
+    });
+    if (!decl) return [];
+
+    const data = await this.readData(domain);
+    const since = Number(params.since) || 0;
+    const limit = Math.min(parseInt(params.limit) || 50, 200);
+    return (data.posts || [])
+      .filter(p => {
+        if ((p.channel || 'general') !== decl.name) return false;
+        if (since && p.timestamp <= since) return false;
+        return true;
+      })
+      .slice(0, limit)
+      .map(p => ({
+        author: p.author,
+        authorName: p.authorName || null,
+        timestamp: p.timestamp,
+        text: p.text || '',
+        image: p.image || null
+      }));
+  }
+
   attach(router) {
     router.use((req, res, next) => {
       req.domain = req.hostname || 'localhost';
@@ -377,7 +437,7 @@ export default class MessageBoardAgent {
           return res.status(403).json({ error: 'Only admins can add channels' });
         }
 
-        const { name, list } = req.body;
+        const { name, list, feed } = req.body;
         if (!name || !/^[a-z0-9-]+$/.test(name)) {
           return res.status(400).json({ error: 'Invalid channel name. Use lowercase letters, numbers, and hyphens only.' });
         }
@@ -400,13 +460,12 @@ export default class MessageBoardAgent {
           return res.status(400).json({ error: 'Channel already exists' });
         }
 
-        req.boardConfig.data.messageBoard.channels.push({
-          name,
-          list: list || null
-        });
+        const channel = { name, list: list || null };
+        if (feed) channel.feed = true;
+        req.boardConfig.data.messageBoard.channels.push(channel);
         req.boardConfig.save();
 
-        res.json({ success: true, channel: { name, list: list || null } });
+        res.json({ success: true, channel });
       } catch (error) {
         console.error('[message-board] Add channel error:', error);
         res.status(500).json({ error: error.message });
@@ -456,7 +515,7 @@ export default class MessageBoardAgent {
         }
 
         const { name } = req.params;
-        const { list } = req.body;
+        const { list, feed } = req.body;
         if (!req.boardConfig.data.messageBoard.channels) {
           return res.status(404).json({ error: 'Channel not found' });
         }
@@ -472,7 +531,11 @@ export default class MessageBoardAgent {
         }
 
         const channel = typeof channels[index] === 'string' ? JSON.parse(channels[index]) : channels[index];
-        channel.list = list || null;
+        if ('list' in req.body) channel.list = list || null;
+        if ('feed' in req.body) {
+          if (feed) channel.feed = true;
+          else delete channel.feed;
+        }
         channels[index] = channel;
         req.boardConfig.save();
 
@@ -1387,6 +1450,7 @@ export default class MessageBoardAgent {
       });
 
       const posts = (await Promise.all(postPromises)).filter(p => p !== null);
+      console.log('[readData] index=%d loaded=%d sample=%o', index.posts.length, posts.length, posts[0]);
 
       return {
         posts,

@@ -262,6 +262,9 @@
       color: var(--text-color);
       box-sizing: border-box;
     }
+    .form-group input[type="checkbox"] {
+      width: unset !important;
+    }
 
     .form-group input:focus,
     .form-group textarea:focus,
@@ -507,9 +510,17 @@
           <p style="font-size: 0.75rem; color: var(--text-color-quiet); margin: 4px 0 0 0;">Leave as default or select an ACL list to restrict access.</p>
         </div>
 
+        <div class="form-group">
+          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+            <input type="checkbox" id="channel-feed">
+            Publish as feed
+          </label>
+          <p style="font-size: 0.75rem; color: var(--text-color-quiet); margin: 4px 0 0 0;">Expose this channel via <code>/.well-known/ai/feeds</code> so other epistery sites can follow it.</p>
+        </div>
+
         <div class="form-actions">
           <button type="button" class="btn" onclick="closeChannelModal()">Cancel</button>
-          <button type="submit" class="btn btn-primary">Add Channel</button>
+          <button type="submit" class="btn btn-primary" id="add-channel-submit">Add Channel</button>
         </div>
       </form>
     </div>
@@ -974,46 +985,66 @@
           console.log('[admin] First filtered channel:', channels[0], 'name:', channels[0].name, 'keys:', Object.keys(channels[0]));
         }
 
+        // Snapshot for dirty-tracking — Save button only enables when this
+        // diverges from what's in the DOM.
+        window._channelsSnapshot = channels.map(c => ({
+          name: c.name,
+          list: c.list || '',
+          feed: !!c.feed
+        }));
+
+        const aclOpts = (selected) => `
+          <option value=""${!selected ? ' selected' : ''}>Default access</option>
+          ${(window._aclLists || []).map(l => `<option value="${escapeHtml(l)}"${selected === l ? ' selected' : ''}>${escapeHtml(l)}</option>`).join('')}
+        `;
+
+        const generalHeader = `
+          <div style="padding: var(--spacer); background: var(--bg-color-quiet-d); border-radius: 6px; margin-bottom: var(--spacer); border: 1px solid var(--page-border);">
+            <strong>#general</strong> (Built-in)<br>
+            <span style="font-size: 0.875em; color: var(--text-color-quiet);">Displays all posts without a specific channel</span>
+          </div>`;
+
+        const saveBar = `
+          <div class="form-actions" style="margin-top: var(--spacer2);">
+            <button id="save-channels-btn" class="btn btn-primary" onclick="saveChannels()" disabled>Save changes</button>
+          </div>`;
+
         if (channels && channels.length > 0) {
           container.innerHTML = `
-            <div style="padding: var(--spacer); background: var(--bg-color-quiet-d); border-radius: 6px; margin-bottom: var(--spacer); border: 1px solid var(--page-border);">
-              <strong>#general</strong> (Built-in)<br>
-              <span style="font-size: 0.875em; color: var(--text-color-quiet);">Displays all posts without a specific channel</span>
-            </div>
-            <table class="member-table">
+            ${generalHeader}
+            <table class="member-table" id="channels-table">
               <thead>
                 <tr>
                   <th>Channel Name</th>
                   <th>Access List</th>
+                  <th style="text-align: center;">Feed</th>
                   <th style="text-align: right;">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                ${channels.map(channel => {
-                  return `
-                  <tr>
+                ${channels.map(channel => `
+                  <tr data-channel="${escapeHtml(channel.name)}">
                     <td><strong>#${escapeHtml(channel.name || 'MISSING')}</strong></td>
                     <td>
-                      <select class="channel-list-select" data-channel="${escapeHtml(channel.name)}" onchange="updateChannelList(this)">
-                        <option value=""${!channel.list ? ' selected' : ''}>Default access</option>
-                        ${(window._aclLists || []).map(l => `<option value="${escapeHtml(l)}"${channel.list === l ? ' selected' : ''}>${escapeHtml(l)}</option>`).join('')}
+                      <select class="channel-list-select" data-channel="${escapeHtml(channel.name)}" oninput="markChannelsDirty()">
+                        ${aclOpts(channel.list)}
                       </select>
+                    </td>
+                    <td style="text-align: center;">
+                      <input type="checkbox" class="channel-feed-check" data-channel="${escapeHtml(channel.name)}" ${channel.feed ? 'checked' : ''} oninput="markChannelsDirty()">
                     </td>
                     <td style="text-align: right;">
                       <button class="btn btn-danger" onclick="deleteChannel('${escapeHtml(channel.name)}')">Delete</button>
                     </td>
                   </tr>
-                `;
-                }).join('')}
+                `).join('')}
               </tbody>
             </table>
+            ${saveBar}
           `;
         } else {
           container.innerHTML = `
-            <div style="padding: var(--spacer); background: var(--bg-color-quiet-d); border-radius: 6px; margin-bottom: var(--spacer); border: 1px solid var(--page-border);">
-              <strong>#general</strong> (Built-in)<br>
-              <span style="font-size: 0.875em; color: var(--text-color-quiet);">Displays all posts without a specific channel</span>
-            </div>
+            ${generalHeader}
             <div class="empty-state">No custom channels configured. Add a channel to get started.</div>
           `;
         }
@@ -1044,26 +1075,62 @@
       selectEl.innerHTML = options.join('');
     }
 
-    async function updateChannelList(selectEl) {
-      const channelName = selectEl.dataset.channel;
-      const list = selectEl.value;
-      try {
-        const response = await fetch(`/agent/epistery/message-board/api/channels/${encodeURIComponent(channelName)}`, {
+    // Compare current DOM state to the snapshot taken at load time.
+    // Returns an array of changed channel patches.
+    function diffChannels() {
+      const snapshot = window._channelsSnapshot || [];
+      const byName = new Map(snapshot.map(s => [s.name, s]));
+      const changed = [];
+      document.querySelectorAll('#channels-table tbody tr').forEach(tr => {
+        const name = tr.dataset.channel;
+        const before = byName.get(name);
+        if (!before) return;
+        const list = tr.querySelector('.channel-list-select').value;
+        const feed = tr.querySelector('.channel-feed-check').checked;
+        const patch = {};
+        if ((list || '') !== (before.list || '')) patch.list = list || null;
+        if (feed !== before.feed) patch.feed = feed;
+        if (Object.keys(patch).length) changed.push({ name, patch });
+      });
+      return changed;
+    }
+
+    function markChannelsDirty() {
+      const btn = document.getElementById('save-channels-btn');
+      if (btn) btn.disabled = diffChannels().length === 0;
+    }
+
+    async function saveChannels() {
+      const changed = diffChannels();
+      if (changed.length === 0) return;
+      const btn = document.getElementById('save-channels-btn');
+      if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+      showMessage(`Saving ${changed.length} channel${changed.length === 1 ? '' : 's'}…`, 'info');
+
+      const results = await Promise.allSettled(changed.map(({ name, patch }) =>
+        fetch(`/agent/epistery/message-board/api/channels/${encodeURIComponent(name)}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
-          body: JSON.stringify({ list: list || null })
-        });
-        if (!response.ok) {
-          const error = await response.json();
-          throw new Error(error.error || 'Failed to update channel');
-        }
-        showMessage(`Updated access list for #${channelName}`, 'success');
-      } catch (error) {
-        console.error('Failed to update channel list:', error);
-        showMessage('Failed to update channel: ' + error.message, 'error');
-        await loadChannels();
+          body: JSON.stringify(patch)
+        }).then(async r => {
+          if (!r.ok) {
+            const err = await r.json().catch(() => ({}));
+            throw new Error(err.error || `HTTP ${r.status}`);
+          }
+          return name;
+        })
+      ));
+
+      const failed = results.filter(r => r.status === 'rejected');
+      if (failed.length === 0) {
+        showMessage(`Saved ${changed.length} channel${changed.length === 1 ? '' : 's'}`, 'success');
+      } else {
+        const msgs = failed.map(f => f.reason?.message || 'unknown').join('; ');
+        showMessage(`Saved ${changed.length - failed.length}/${changed.length}; failures: ${msgs}`, 'error');
       }
+      await loadChannels();
+      if (btn) btn.textContent = 'Save changes';
     }
 
     async function showAddChannelModal() {
@@ -1083,13 +1150,20 @@
 
       const name = document.getElementById('channel-name').value.trim();
       const list = document.getElementById('channel-list').value.trim();
+      const feed = document.getElementById('channel-feed').checked;
+
+      // Close immediately + show pending toast. The auth + on-chain checks
+      // on the server can take several seconds; without this, the button
+      // looks broken and people click it repeatedly.
+      closeChannelModal();
+      showMessage(`Adding #${name}…`, 'info');
 
       try {
         const response = await fetch('/agent/epistery/message-board/api/channels', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
-          body: JSON.stringify({ name, list: list || null })
+          body: JSON.stringify({ name, list: list || null, feed })
         });
 
         if (!response.ok) {
@@ -1097,8 +1171,7 @@
           throw new Error(error.error || 'Failed to add channel');
         }
 
-        showMessage('Channel added successfully', 'success');
-        closeChannelModal();
+        showMessage(`Channel #${name} added`, 'success');
         await loadChannels();
       } catch (error) {
         console.error('Failed to add channel:', error);
