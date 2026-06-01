@@ -133,21 +133,18 @@ export default class MessageBoardAgent {
    * Get permissions using DomainAgent contract
    * Demonstrates new contract architecture with isInACL()
    */
-  async getPermissions(client, req) {
-    const result = {address:client?.address,admin:false,edit:false,read:true};
-
-    if (!client || !req.domainAcl) {
+  async getPermissions(req) {
+    // Identity + ACL resolution is host-owned (req.me — same for human and MCP
+    // callers). Boards are read-open by default; an identified caller's read is
+    // gated by their ACL level.
+    const result = { address: req.me?.identityAddress, admin: false, edit: false, read: true };
+    if (!req.me?.identityAddress || !req.domainAcl) {
       return result;
     }
-
-    try {
-      const access = await req.domainAcl.checkAgentAccess('epistery/message-board', client.address, req.hostname);
-      result.admin = access.level >= 3;
-      result.edit = access.level >= 2;
-      result.read = access.level >= 1;
-    } catch (error) {
-      console.error('[message-board] Permission check error:', error);
-    }
+    const access = await req.me.access('epistery/message-board');
+    result.admin = access.admin;
+    result.edit = access.edit;
+    result.read = access.read;
     return result;
   }
 
@@ -161,27 +158,23 @@ export default class MessageBoardAgent {
   // ── feeds-spec-v0 contribution interface ──
   //
   // ai-discovery aggregates these into /.well-known/ai/feeds and normalizes
-  // posts into the spec envelope. Channels marked `feed: true` (or with a
-  // `feed` string id) are exposed as feeds; others remain ACL-gated and
-  // invisible to feed consumers.
+  // posts into the spec envelope. Feed-eligibility is **ACL-derived**: a
+  // channel with no `list` inherits the agent's default access level. If
+  // the agent's default permits anonymous read (admin configures via the
+  // ACL widget), the channel is publishable as a feed. Channels with a
+  // `list` are restricted and never published here. No parallel flag.
 
-  // Per-domain list of feed declarations this agent publishes.
   async aiFeeds(domain) {
     const config = this.getDomainConfig(domain);
     const channels = (config.data?.messageBoard?.channels || [])
       .map(c => typeof c === 'string' ? JSON.parse(c) : c)
       .filter(Boolean);
-    const feeds = [];
-    for (const ch of channels) {
-      if (!ch.feed) continue;
-      const id = typeof ch.feed === 'string' ? ch.feed : ch.name;
-      feeds.push({
-        id,
-        title: ch.title || ch.name,
-        default: !!ch.defaultFeed
-      });
-    }
-    return feeds;
+    return channels
+      .filter(ch => !ch.list)
+      .map(ch => ({
+        id: ch.name,
+        title: ch.title || ch.name
+      }));
   }
 
   // Raw posts for a feed id, in this agent's native shape. ai-discovery
@@ -191,11 +184,7 @@ export default class MessageBoardAgent {
     const channels = (config.data?.messageBoard?.channels || [])
       .map(c => typeof c === 'string' ? JSON.parse(c) : c)
       .filter(Boolean);
-    const decl = channels.find(c => {
-      if (!c.feed) return false;
-      const id = typeof c.feed === 'string' ? c.feed : c.name;
-      return id === feedId;
-    });
+    const decl = channels.find(c => c.name === feedId && !c.list);
     if (!decl) return [];
 
     const data = await this.readData(domain);
@@ -299,64 +288,9 @@ export default class MessageBoardAgent {
 
     // Client permissions
     router.get('/api/permissions', async (req, res) => {
-      const permissions = await this.getPermissions(req.episteryClient, req);
+      const permissions = await this.getPermissions(req);
       res.json(permissions);
     })
-
-    // Get sidebar links
-    router.get('/links', (req, res) => {
-      const links = this.loadSidebarLinks(req.domain);
-      res.json(links);
-    });
-
-    // Add sidebar link (requires admin permission)
-    router.post('/links', async (req, res) => {
-      try {
-        const permission = await this.checkAdminPermission(req);
-        if (!permission.allowed) {
-          return res.status(403).json({ error: 'Only admins can manage links' });
-        }
-
-        const { title, url } = req.body;
-        if (!title || !url) {
-          return res.status(400).json({ error: 'Title and URL are required' });
-        }
-
-        const links = this.loadSidebarLinks(req.domain);
-        links.push({ title, url });
-        this.saveSidebarLinks(req.domain, links);
-
-        res.json({ success: true, links });
-      } catch (error) {
-        console.error('[message-board] Error adding link:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    // Delete sidebar link (requires admin permission)
-    router.delete('/links/:index', async (req, res) => {
-      try {
-        const permission = await this.checkAdminPermission(req);
-        if (!permission.allowed) {
-          return res.status(403).json({ error: 'Only admins can manage links' });
-        }
-
-        const index = parseInt(req.params.index);
-        const links = this.loadSidebarLinks(req.domain);
-
-        if (index < 0 || index >= links.length) {
-          return res.status(404).json({ error: 'Link not found' });
-        }
-
-        links.splice(index, 1);
-        this.saveSidebarLinks(req.domain, links);
-
-        res.json({ success: true, links });
-      } catch (error) {
-        console.error('[message-board] Error deleting link:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
 
     // Get image settings
     router.get('/api/settings/image', (req, res) => {
@@ -386,11 +320,11 @@ export default class MessageBoardAgent {
         const accessibleChannels = [{ name: 'general', list: null, isPseudo: true }];
 
         // Filter channels based on user's access
-        if (req.episteryClient && req.episteryClient.address) {
+        if (req.me?.identityAddress) {
           // Check user's access level to message-board
           const access = await req.domainAcl.checkAgentAccess(
             'epistery/message-board',
-            req.episteryClient.address,
+            req.me.identityAddress,
             req.hostname
           );
 
@@ -409,7 +343,7 @@ export default class MessageBoardAgent {
                 // Check specific list access
                 const isInList = await req.domainAcl.chain.contract.isInACL(
                   channel.list,
-                  req.episteryClient.address
+                  req.me.identityAddress
                 );
                 if (isInList) {
                   accessibleChannels.push(channel);
@@ -437,7 +371,7 @@ export default class MessageBoardAgent {
           return res.status(403).json({ error: 'Only admins can add channels' });
         }
 
-        const { name, list, feed } = req.body;
+        const { name, list } = req.body;
         if (!name || !/^[a-z0-9-]+$/.test(name)) {
           return res.status(400).json({ error: 'Invalid channel name. Use lowercase letters, numbers, and hyphens only.' });
         }
@@ -461,7 +395,6 @@ export default class MessageBoardAgent {
         }
 
         const channel = { name, list: list || null };
-        if (feed) channel.feed = true;
         req.boardConfig.data.messageBoard.channels.push(channel);
         req.boardConfig.save();
 
@@ -515,7 +448,7 @@ export default class MessageBoardAgent {
         }
 
         const { name } = req.params;
-        const { list, feed } = req.body;
+        const { list } = req.body;
         if (!req.boardConfig.data.messageBoard.channels) {
           return res.status(404).json({ error: 'Channel not found' });
         }
@@ -532,10 +465,9 @@ export default class MessageBoardAgent {
 
         const channel = typeof channels[index] === 'string' ? JSON.parse(channels[index]) : channels[index];
         if ('list' in req.body) channel.list = list || null;
-        if ('feed' in req.body) {
-          if (feed) channel.feed = true;
-          else delete channel.feed;
-        }
+        // Legacy: scrub any leftover `feed` flag from older config — ACL is
+        // the source of truth for feed-eligibility now.
+        if ('feed' in channel) delete channel.feed;
         channels[index] = channel;
         req.boardConfig.save();
 
@@ -627,7 +559,7 @@ export default class MessageBoardAgent {
     // Get unread counts per channel for the authenticated user
     router.get('/api/unread', async (req, res) => {
       try {
-        if (!req.userVault || !req.episteryClient?.address) {
+        if (!req.userVault || !req.me?.identityAddress) {
           return res.status(401).json({ error: 'Authentication required' });
         }
 
@@ -657,7 +589,7 @@ export default class MessageBoardAgent {
     // Mark a channel as read
     router.post('/api/channels/:name/read', async (req, res) => {
       try {
-        if (!req.userVault || !req.episteryClient?.address) {
+        if (!req.userVault || !req.me?.identityAddress) {
           return res.status(401).json({ error: 'Authentication required' });
         }
 
@@ -925,11 +857,11 @@ export default class MessageBoardAgent {
       try {
         const postId = parseInt(req.params.id);
 
-        if (!req.episteryClient) {
+        if (!req.me?.identityAddress) {
           return res.status(401).json({ error: 'Authentication required' });
         }
 
-        const userAddress = req.episteryClient.address;
+        const userAddress = req.me.identityAddress;
         const data = await this.readData(req.domain);
         const post = data.posts.find(p => p.id === postId);
 
@@ -975,11 +907,11 @@ export default class MessageBoardAgent {
           return res.status(400).json({ error: 'Text is required' });
         }
 
-        if (!req.episteryClient) {
+        if (!req.me?.identityAddress) {
           return res.status(401).json({ error: 'Authentication required' });
         }
 
-        const userAddress = req.episteryClient.address;
+        const userAddress = req.me.identityAddress;
         const data = await this.readData(req.domain);
         const post = data.posts.find(p => p.id === postId);
 
@@ -1020,10 +952,10 @@ export default class MessageBoardAgent {
         if (!text || text.trim().length === 0) {
           return res.status(400).json({ error: 'Text is required' });
         }
-        if (!req.episteryClient) {
+        if (!req.me?.identityAddress) {
           return res.status(401).json({ error: 'Authentication required' });
         }
-        const userAddress = req.episteryClient.address;
+        const userAddress = req.me.identityAddress;
         const data = await this.readData(req.domain);
         const post = data.posts.find(p => p.id === postId);
         if (!post) return res.status(404).json({ error: 'Post not found' });
@@ -1054,10 +986,10 @@ export default class MessageBoardAgent {
       try {
         const postId = parseInt(req.params.id);
         const commentId = parseInt(req.params.cid);
-        if (!req.episteryClient) {
+        if (!req.me?.identityAddress) {
           return res.status(401).json({ error: 'Authentication required' });
         }
-        const userAddress = req.episteryClient.address;
+        const userAddress = req.me.identityAddress;
         const data = await this.readData(req.domain);
         const post = data.posts.find(p => p.id === postId);
         if (!post) return res.status(404).json({ error: 'Post not found' });
@@ -1084,98 +1016,6 @@ export default class MessageBoardAgent {
       }
     });
 
-    // API endpoint to get links
-    router.get('/api/links', async (req, res) => {
-      try {
-        const domain = req.headers.host?.split(':')[0] || 'localhost';
-        const cfg = new Config();
-        cfg.setPath(domain);
-
-        const links = cfg.data?.links || [];
-        res.json({ links });
-      } catch (error) {
-        console.error('[get-links] Error:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    // API endpoint to save/update links (requires admin auth)
-    router.post('/api/links', async (req, res) => {
-      try {
-        const { slug, url, title } = req.body;
-        const domain = req.headers.host?.split(':')[0] || 'localhost';
-
-        if (!slug || !url) {
-          return res.status(400).json({ error: 'slug and url are required' });
-        }
-
-        // Check if user is admin
-        const permission = await this.checkAdminPermission(req);
-        if (!permission.allowed) {
-          return res.status(403).json({ error: 'Not authorized' });
-        }
-
-        const cfg = new Config();
-        cfg.setPath(domain);
-
-        if (!cfg.data.links) {
-          cfg.data.links = [];
-        }
-
-        // Check if link exists and update, or add new
-        const existingIndex = cfg.data.links.findIndex(l => l.slug === slug);
-        const link = { slug, url, title: title || slug };
-
-        if (existingIndex >= 0) {
-          cfg.data.links[existingIndex] = link;
-        } else {
-          cfg.data.links.push(link);
-        }
-
-        cfg.save();
-
-        res.json({ success: true, link });
-      } catch (error) {
-        console.error('[save-link] Error:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
-
-    // API endpoint to delete link (requires admin auth)
-    router.delete('/api/links/:slug', async (req, res) => {
-      try {
-        const { slug } = req.params;
-        const domain = req.headers.host?.split(':')[0] || 'localhost';
-
-        // Check if user is admin
-        const permission = await this.checkAdminPermission(req);
-        if (!permission.allowed) {
-          return res.status(403).json({ error: 'Not authorized' });
-        }
-
-        const cfg = new Config();
-        cfg.setPath(domain);
-
-        if (!cfg.data.links) {
-          return res.status(404).json({ error: 'Link not found' });
-        }
-
-        const initialLength = cfg.data.links.length;
-        cfg.data.links = cfg.data.links.filter(l => l.slug !== slug);
-
-        if (cfg.data.links.length === initialLength) {
-          return res.status(404).json({ error: 'Link not found' });
-        }
-
-        cfg.save();
-
-        res.json({ success: true });
-      } catch (error) {
-        console.error('[delete-link] Error:', error);
-        res.status(500).json({ error: error.message });
-      }
-    });
-
     // Status endpoint
     router.get('/status', async (req, res) => {
       const data = await this.readData(req.domain);
@@ -1197,12 +1037,12 @@ export default class MessageBoardAgent {
    */
   async checkPostingPermission(req) {
     // Check for authenticated client from epistery-host middleware
-    if (!req.episteryClient) {
+    if (!req.me?.identityAddress) {
       console.log('[message-board] No authenticated client');
       return { allowed: false, reason: 'Authentication required' };
     }
 
-    const address = req.episteryClient.address;
+    const address = req.me.identityAddress;
     console.log(`[message-board] Checking permissions for ${address}`);
 
     try {
@@ -1286,9 +1126,9 @@ export default class MessageBoardAgent {
 
     const accessible = new Set(['general']);
 
-    if (req.episteryClient && req.episteryClient.address) {
+    if (req.me?.identityAddress) {
       const access = await req.domainAcl.checkAgentAccess(
-        'epistery/message-board', req.episteryClient.address, req.hostname
+        'epistery/message-board', req.me.identityAddress, req.hostname
       );
       if (access.level >= 3) {
         channels.forEach(ch => accessible.add(ch.name));
@@ -1297,7 +1137,7 @@ export default class MessageBoardAgent {
           if (!ch.list) {
             if (access.level >= 1) accessible.add(ch.name);
           } else {
-            const isInList = await req.domainAcl.chain.contract.isInACL(ch.list, req.episteryClient.address);
+            const isInList = await req.domainAcl.chain.contract.isInACL(ch.list, req.me.identityAddress);
             if (isInList) accessible.add(ch.name);
           }
         }
@@ -1311,11 +1151,11 @@ export default class MessageBoardAgent {
   }
 
   async checkAdminPermission(req) {
-    if (!req.episteryClient) {
+    if (!req.me?.identityAddress) {
       return { allowed: false, reason: 'Authentication required' };
     }
 
-    const address = req.episteryClient.address;
+    const address = req.me.identityAddress;
 
     try {
       const access = await req.domainAcl.checkAgentAccess('epistery/message-board', address, req.hostname);
@@ -1807,28 +1647,4 @@ export default class MessageBoardAgent {
     console.log('[message-board] Agent cleanup');
   }
 
-  /**
-   * Load sidebar links from Config storage for a specific domain
-   */
-  loadSidebarLinks(domain) {
-    try {
-      const config = new Config();
-      config.setPath(domain);
-      const linksData = config.readFile('sidebar-links.json');
-      return JSON.parse(linksData.toString());
-    } catch (error) {
-      // No links file yet, return empty array
-      return [];
-    }
-  }
-
-  /**
-   * Save sidebar links to Config storage for a specific domain
-   */
-  saveSidebarLinks(domain, links) {
-    const config = new Config();
-    config.setPath(domain);
-    config.save(); // Ensure directory exists
-    config.writeFile('sidebar-links.json', JSON.stringify(links, null, 2));
-  }
 }

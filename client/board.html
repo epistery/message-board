@@ -577,11 +577,6 @@
       <ul class="sidebar-links" id="channels-list">
         <!-- Channels will be loaded here -->
       </ul>
-
-      <div class="sidebar-title">Links</div>
-      <ul class="sidebar-links" id="sidebar-links">
-        <!-- Links will be loaded here -->
-      </ul>
     </div>
   </main>
 
@@ -594,40 +589,5 @@
   </footer>
 
   <script type="module" src="/agent/epistery/message-board/client/app.js"></script>
-  <script>
-    // Load sidebar links
-    async function loadSidebarLinks() {
-      try {
-        const response = await fetch('/agent/epistery/message-board/links');
-        if (response.ok) {
-          const links = await response.json();
-          const linksContainer = document.getElementById('sidebar-links');
-
-          if (links && links.length > 0) {
-            linksContainer.innerHTML = links.map(link => `
-              <li class="sidebar-link">
-                <a href="${escapeHtml(link.url)}" target="_blank" rel="noopener">
-                  ${escapeHtml(link.title)}
-                </a>
-              </li>
-            `).join('');
-          } else {
-            linksContainer.innerHTML = '<li style="padding: var(--spacer); color: var(--text-color-quiet); font-size: 0.875em;">No links yet</li>';
-          }
-        }
-      } catch (error) {
-        console.error('[board] Failed to load sidebar links:', error);
-      }
-    }
-
-    function escapeHtml(text) {
-      const div = document.createElement('div');
-      div.textContent = text;
-      return div.innerHTML;
-    }
-
-    // Load links on page load
-    loadSidebarLinks();
-  </script>
 </body>
 </html>
