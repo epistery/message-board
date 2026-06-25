@@ -15,6 +15,10 @@ const ethers = require('ethers');
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// How long mimi stays watchful in a channel after being engaged. While the
+// window is open, any new message re-engages mimi without needing @mimi.
+const MIMI_WATCH_MS = 3 * 60 * 1000;
+
 /**
  * Message Board Agent
  *
@@ -40,6 +44,11 @@ export default class MessageBoardAgent {
 
     // Storage backends (per domain)
     this.storageBackends = new Map();
+
+    // Mimi participation state
+    this.mimiWatch = new Map();      // `${domain}:${channel}` -> watch-until epoch ms
+    this.mimiInFlight = new Set();   // `${domain}:${channel}` currently composing
+    this.hostIdentity = new Map();   // domain -> lowercase host author address
   }
 
   /**
@@ -768,6 +777,11 @@ export default class MessageBoardAgent {
         // Send response to user immediately
         res.json(post);
 
+        // Let mimi participate if mentioned or watching this channel (async,
+        // never blocks the human; mimi's reply arrives over WebSocket).
+        this.maybeSummonMimi(req, post.channel, post.text, post.author)
+          .catch(e => console.error('[message-board] mimi summon error:', e.message));
+
         // Add to IPFS batch chain asynchronously (invisible to user)
         // This creates Data Wallet: user owns content with cryptographic proof
         setImmediate(async () => {
@@ -846,6 +860,10 @@ export default class MessageBoardAgent {
 
         this.broadcast({ type: 'new-comment', postId, comment }, req.domain);
         res.json(comment);
+
+        // A comment can also summon mimi (or land in an open watch window).
+        this.maybeSummonMimi(req, post.channel, comment.text, comment.author)
+          .catch(e => console.error('[message-board] mimi summon error:', e.message));
       } catch (error) {
         console.error('[message-board] Comment error:', error);
         res.status(500).json({ error: error.message });
@@ -1393,6 +1411,151 @@ export default class MessageBoardAgent {
         client.send(JSON.stringify(message));
       }
     });
+  }
+
+  /**
+   * The host identity mimi posts under. Mimi *is* the host, so its messages are
+   * authored by the domain contract address (fallback: the contract owner /
+   * server wallet address). Cached per domain.
+   */
+  getHostIdentity(domain) {
+    if (this.hostIdentity.has(domain)) return this.hostIdentity.get(domain);
+    const config = new Config();
+    config.setPath(domain);
+    let addr = config.data?.contract_address || null;
+    if (!addr && config.data?.wallet?.mnemonic) {
+      try { addr = ethers.Wallet.fromMnemonic(config.data.wallet.mnemonic).address; } catch (_) { /* ignore */ }
+    }
+    addr = (addr || 'host:mimi').toLowerCase();
+    this.hostIdentity.set(domain, addr);
+    return addr;
+  }
+
+  // Display label for a post/comment author in a transcript line.
+  mimiLabelFor(item, hostAddr) {
+    if (item.author && item.author.toLowerCase() === hostAddr) return 'Mimi';
+    return item.authorName || (item.author ? item.author.slice(0, 8) : 'someone');
+  }
+
+  /**
+   * Build a plain-text transcript of recent activity in a channel, oldest
+   * first, for mimi to read. Includes comments under each post.
+   */
+  async buildChannelTranscript(domain, channel, limit = 25) {
+    const data = await this.readData(domain);
+    const chan = channel || 'general';
+    const hostAddr = this.getHostIdentity(domain);
+    // data.posts is newest-first; take the newest `limit`, then chronological.
+    const recent = data.posts
+      .filter(p => (p.channel || 'general') === chan)
+      .slice(0, limit)
+      .reverse();
+
+    const lines = [];
+    for (const p of recent) {
+      lines.push(`${this.mimiLabelFor(p, hostAddr)}: ${p.text || '[image]'}`);
+      for (const c of (p.comments || [])) {
+        lines.push(`  ${this.mimiLabelFor(c, hostAddr)} (reply): ${c.text}`);
+      }
+    }
+    return lines.join('\n');
+  }
+
+  /**
+   * Publish a reply from mimi as a new top-level post, authored by the host
+   * identity with the display name "mimi". Mirrors POST /api/posts minus the
+   * human permission path.
+   */
+  async postAsMimi(domain, channel, text) {
+    const data = await this.readData(domain);
+    const post = {
+      id: data.nextId++,
+      text: String(text).trim(),
+      image: null,
+      author: this.getHostIdentity(domain),
+      authorName: 'mimi',
+      timestamp: Date.now(),
+      comments: [],
+      channel: channel && channel !== 'general' ? channel : null
+    };
+    data.posts.unshift(post);
+    await this.writePost(domain, post);
+    await this.writeData(domain, data);
+    this.broadcast({ type: 'new-post', post }, domain);
+    setImmediate(async () => {
+      try { await this.addPostToBatch(post, null, domain); }
+      catch (e) { console.error('[message-board] mimi batch error (non-fatal):', e.message); }
+    });
+    return post;
+  }
+
+  /**
+   * Decide whether mimi should respond to a new message and, if so, summon it.
+   * Triggers on an @mimi mention or an open watch window. Runs async so it
+   * never delays the human's response; mimi's reply arrives over WebSocket.
+   *
+   * Mimi runs under the *poster's* forwarded session (their access and tools),
+   * which is also the constraint that makes attribution work: only the board,
+   * not mimi, can author under the host identity.
+   */
+  async maybeSummonMimi(req, channel, latestText, authorAddress) {
+    const domain = req.domain;
+    const chan = channel || 'general';
+    const watchKey = `${domain}:${chan}`;
+    const hostAddr = this.getHostIdentity(domain);
+    try {
+      // Never react to mimi's own posts (belt-and-suspenders: these don't come
+      // through the HTTP routes, but guard anyway).
+      if (authorAddress && authorAddress.toLowerCase() === hostAddr) return;
+
+      const mentioned = /(^|[^a-z0-9_@])@mimi\b/i.test(latestText || '');
+      const watching = (this.mimiWatch.get(watchKey) || 0) > Date.now();
+      if (!mentioned && !watching) return;
+
+      // One mimi turn per channel at a time — avoids pile-ups during a burst.
+      if (this.mimiInFlight.has(watchKey)) return;
+      this.mimiInFlight.add(watchKey);
+
+      // Open/extend the watch window the moment we engage, so a follow-up lands
+      // inside it even if mimi is slow or declines to reply.
+      this.mimiWatch.set(watchKey, Date.now() + MIMI_WATCH_MS);
+
+      // Forward the poster's auth so mimi resolves to their session.
+      const headers = {
+        'Content-Type': 'application/json',
+        'Host': req.headers.host,
+        'X-Forwarded-Host': req.headers.host
+      };
+      if (req.headers.authorization) headers['Authorization'] = req.headers.authorization;
+      if (req.headers.cookie) headers['Cookie'] = req.headers.cookie;
+
+      const transcript = await this.buildChannelTranscript(domain, chan);
+      const port = process.env.PORT || 4080;
+      const url = `http://127.0.0.1:${port}/agent/epistery/mimi/board-reply`;
+
+      let reply = '';
+      try {
+        const r = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ transcript, channel: chan }) });
+        if (r.ok) {
+          const j = await r.json();
+          reply = (j.reply || '').trim();
+        } else {
+          // 403 = poster lacks mimi access; anything else = mimi unavailable.
+          console.log(`[message-board] mimi summon skipped (${r.status})`);
+        }
+      } catch (e) {
+        console.error('[message-board] mimi summon failed:', e.message);
+      }
+
+      if (reply) {
+        await this.postAsMimi(domain, chan, reply);
+        this.mimiWatch.set(watchKey, Date.now() + MIMI_WATCH_MS);
+      }
+    } catch (e) {
+      console.error('[message-board] maybeSummonMimi error:', e.message);
+    } finally {
+      this.mimiInFlight.delete(watchKey);
+    }
   }
 
   /**
