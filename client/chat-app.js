@@ -11,6 +11,9 @@ let unreadCounts = {};
 async function init() {
   await mb.init();
 
+  // Reveal the admin button (beside the identity block) for admins only.
+  updateAdminLink();
+
   // Set up callbacks for post updates and unread tracking
   mb.onPostsUpdated = renderMessages;
   mb.onChannelActivity = (channel) => {
@@ -46,6 +49,13 @@ async function init() {
   if (!mb.permissions || !mb.permissions.edit) {
     hideInput();
   }
+}
+
+// Show the sidebar admin button only for admins (level >= 3).
+function updateAdminLink() {
+  const link = document.getElementById('admin-link');
+  if (!link) return;
+  link.style.display = mb.permissions && mb.permissions.admin ? 'flex' : 'none';
 }
 
 // Load channels

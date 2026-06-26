@@ -385,6 +385,39 @@
       margin-bottom: var(--spacer);
     }
 
+    /* Identity/access block with the admin button beside it. */
+    .identity-block {
+      display: flex;
+      align-items: stretch;
+      gap: var(--spacerhalf);
+      margin-bottom: var(--spacer);
+    }
+    .identity-block .request-access-widget {
+      flex: 1;
+      min-width: 0;
+      margin-bottom: 0;
+    }
+    .admin-btn {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 var(--spacer);
+      background: var(--bg-color);
+      border: 1px solid var(--page-border);
+      border-radius: 8px;
+      color: var(--text-color);
+      text-decoration: none;
+      font-size: 0.85em;
+      font-weight: 500;
+      white-space: nowrap;
+      transition: all 0.2s;
+    }
+    .admin-btn:hover {
+      background: var(--bg-color-d);
+      color: var(--rust-mid);
+    }
+
     .comments {
       margin-top: var(--spacerhalf);
       padding-left: var(--spacer);
@@ -501,6 +534,47 @@
     .comment-form button:hover {
       background: var(--action-color-hilite);
     }
+
+    /* ---- Mobile: full-height chat ----
+       The identity/access widget and channel list relocate into the header's
+       hamburger drawer (see the relocation script below). The chat column then
+       fills the viewport: messages scroll, the composer stays pinned to bottom. */
+    @media (max-width: 768px) {
+      /* dvh tracks the real visible height as the mobile URL bar shows/hides. */
+      body {
+        height: 100dvh;
+      }
+
+      /* Sidebar content now lives in the hamburger drawer. */
+      .console-sidebar {
+        display: none;
+      }
+
+      /* Fill the available height instead of the desktop fixed calc. */
+      .console-main {
+        display: flex;
+        flex-direction: column;
+        flex: 1 1 auto;
+        min-height: 0;
+        padding: 0;
+      }
+      .chat-container {
+        flex: 1 1 auto;
+        height: auto;
+        min-height: 0;
+      }
+
+      /* Clear the floating nav button (top-left) so the title isn't hidden.
+         The hamburger sits over the empty right side of the header. */
+      .chat-header {
+        padding-left: calc(var(--spacer2) + 36px);
+      }
+
+      /* The page footer is noise in the chat view. */
+      footer {
+        display: none;
+      }
+    }
   </style>
   <script src="/script/common.js"></script>
 </head>
@@ -547,12 +621,19 @@
     </div>
 
     <div class="console-sidebar">
-      <div class="request-access-widget" data-widget="requestAccess" data-agent="epistery/message-board" data-list="epistery::editor"></div>
+      <!-- On mobile this whole block is relocated into the header's hamburger
+           drawer (see the relocation script near the bottom of the page). -->
+      <div id="board-sidebar-content">
+        <div class="identity-block">
+          <div class="request-access-widget" data-widget="requestAccess" data-agent="epistery/message-board" data-list="epistery::editor"></div>
+          <a id="admin-link" class="admin-btn" href="/agent/epistery/message-board/admin" title="Message board admin" style="display:none;">Admin</a>
+        </div>
 
-      <div class="sidebar-title">Channels</div>
-      <ul class="sidebar-links" id="channels-list">
-        <!-- Channels will be loaded here -->
-      </ul>
+        <div class="sidebar-title">Channels</div>
+        <ul class="sidebar-links" id="channels-list">
+          <!-- Channels will be loaded here -->
+        </ul>
+      </div>
     </div>
   </main>
 
@@ -574,6 +655,40 @@
         this.style.height = Math.min(this.scrollHeight, 200) + 'px';
       });
     }
+
+    // Mobile: relocate the identity/access widget + channel list into the
+    // header's hamburger drawer (#header-sidebar-content). Mirrors the pattern
+    // in wiki/client/page.html. The drawer markup is injected by the header
+    // widget, which dispatches 'header-ready' once #side-bar is in the DOM.
+    (function () {
+      const MOBILE = window.matchMedia('(max-width: 768px)');
+      let bound = false;
+
+      function placeSidebar() {
+        const content = document.getElementById('board-sidebar-content');
+        const drawer = document.getElementById('header-sidebar-content');
+        const sidebar = document.querySelector('.console-sidebar');
+        if (!content || !drawer || !sidebar) return;
+
+        if (MOBILE.matches && !drawer.contains(content)) {
+          drawer.appendChild(content);
+        } else if (!MOBILE.matches && !sidebar.contains(content)) {
+          sidebar.appendChild(content);
+        }
+      }
+
+      function bind() {
+        placeSidebar();
+        if (!bound) {
+          MOBILE.addEventListener('change', placeSidebar);
+          bound = true;
+        }
+      }
+
+      document.addEventListener('header-ready', bind, { once: true });
+      // In case the header widget initialized before this script registered.
+      if (document.getElementById('header-sidebar-content')) bind();
+    })();
   </script>
 </body>
 </html>
