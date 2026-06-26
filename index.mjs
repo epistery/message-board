@@ -124,11 +124,18 @@ export default class MessageBoardAgent {
       const config = new Config();
       config.setPath(domain);
 
-      const batchData = config.readFile('message-board-batch.json') || {
-        chain: [],
-        lastHash: this.lastHash,
-        lastFlush: Date.now()
-      };
+      // Config.readFile throws ENOENT when the file doesn't exist yet (first
+      // post on a domain) and returns a raw Buffer when it does — so parse it
+      // and treat a missing file as the empty default.
+      let batchData = { chain: [], lastHash: this.lastHash, lastFlush: Date.now() };
+      try {
+        const raw = config.readFile('message-board-batch.json');
+        if (raw) batchData = JSON.parse(raw.toString());
+      } catch (e) {
+        if (e.code !== 'ENOENT') {
+          console.error('[message-board] batch state read failed:', e.message);
+        }
+      }
 
       this.domainStates.set(domain, {
         postChain: batchData.chain || [],
@@ -1406,11 +1413,22 @@ export default class MessageBoardAgent {
   broadcast(message, domain) {
     if (!this.wss) return;
 
+    let matched = 0;
+    let total = 0;
     this.wss.clients.forEach(client => {
+      total++;
       if (client.readyState === 1 && client.domain === domain) {
+        matched++;
         client.send(JSON.stringify(message));
       }
     });
+
+    // Loud failure: a live event reached no one despite connected clients.
+    // Almost always a domain mismatch between the WS upgrade Host and req.hostname.
+    if (total > 0 && matched === 0) {
+      const seen = [...this.wss.clients].map(c => c.domain).join(', ') || 'none';
+      console.log(`[message-board] broadcast '${message.type}' matched 0/${total} clients for domain '${domain}' — connected client domains: [${seen}]`);
+    }
   }
 
   /**
