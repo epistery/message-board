@@ -537,6 +537,114 @@
       margin-bottom: var(--spacer);
     }
 
+    /* Identity/access block with the admin button beside it. */
+    .identity-block {
+      display: flex;
+      align-items: stretch;
+      gap: var(--spacerhalf);
+      margin-bottom: var(--spacer);
+    }
+    .identity-block .request-access-widget {
+      flex: 1;
+      min-width: 0;
+      margin-bottom: 0;
+    }
+    .admin-btn {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 var(--spacer);
+      background: var(--bg-color);
+      border: 1px solid var(--page-border);
+      border-radius: 8px;
+      color: var(--text-color);
+      text-decoration: none;
+      font-size: 0.85em;
+      font-weight: 500;
+      white-space: nowrap;
+      transition: all 0.2s;
+    }
+    .admin-btn:hover {
+      background: var(--bg-color-d);
+      color: var(--rust-mid);
+    }
+
+    /* ---- Mobile: chat-style layout ----
+       The identity/access widget and channel list relocate into the header's
+       hamburger drawer (see the relocation script below). The main column then
+       fills the viewport: messages scroll, the composer is pinned to the bottom. */
+    @media (max-width: 768px) {
+      /* dvh tracks the real visible height as the mobile URL bar shows/hides,
+         so the composer stays pinned to the actual viewport bottom. */
+      body {
+        height: 100dvh;
+      }
+
+      /* Sidebar content now lives in the hamburger drawer. */
+      .console-sidebar {
+        display: none;
+      }
+
+      /* board-main (.console-main) becomes a full-height flex column. */
+      .board-main {
+        flex: 1 1 auto;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        max-width: 100%;
+        padding: 0;
+      }
+
+      /* Empty placeholder header — keep it out of the flow. */
+      .board-header {
+        display: none;
+      }
+
+      #error-container {
+        order: 1;
+        flex: 0 0 auto;
+        padding: 0 var(--spacer);
+      }
+
+      /* Messages scroll. Top padding clears the floating nav + hamburger
+         buttons, which overlay the top corners of the page. */
+      #posts-container {
+        order: 2;
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow-y: auto;
+        padding: calc(var(--spacer) + 44px) var(--spacer) var(--spacer);
+      }
+
+      /* Composer pinned to the bottom of the column. */
+      #create-post {
+        order: 3;
+        flex: 0 0 auto;
+        margin: 0;
+        padding: var(--spacerhalf) var(--spacer);
+        border-top: 1px solid var(--page-border);
+        background: var(--bg-color-quiet-d);
+      }
+      #create-post .new-post-form {
+        border: none;
+        padding: 0;
+        background: transparent;
+      }
+      #create-post textarea {
+        min-height: 44px;
+      }
+      /* Keep the composer compact on a phone. */
+      .markdown-hint {
+        display: none;
+      }
+
+      /* The page footer is noise in the chat view. */
+      footer {
+        display: none;
+      }
+    }
+
   </style>
   <script src="/script/common.js"></script>
 </head>
@@ -571,12 +679,19 @@
     </div>
 
     <div class="console-sidebar">
-      <div class="request-access-widget" data-widget="requestAccess" data-agent="epistery/message-board" data-list="epistery::editor"></div>
+      <!-- On mobile this whole block is relocated into the header's hamburger
+           drawer (see the relocation script near the bottom of the page). -->
+      <div id="board-sidebar-content">
+        <div class="identity-block">
+          <div class="request-access-widget" data-widget="requestAccess" data-agent="epistery/message-board" data-list="epistery::editor"></div>
+          <a id="admin-link" class="admin-btn" href="/agent/epistery/message-board/admin" title="Message board admin" style="display:none;">Admin</a>
+        </div>
 
-      <div class="sidebar-title">Channels</div>
-      <ul class="sidebar-links" id="channels-list">
-        <!-- Channels will be loaded here -->
-      </ul>
+        <div class="sidebar-title">Channels</div>
+        <ul class="sidebar-links" id="channels-list">
+          <!-- Channels will be loaded here -->
+        </ul>
+      </div>
     </div>
   </main>
 
@@ -587,6 +702,42 @@
       </div>
     </div>
   </footer>
+
+  <script>
+    // Mobile: relocate the identity/access widget + channel list into the
+    // header's hamburger drawer (#header-sidebar-content). Mirrors the pattern
+    // in wiki/client/page.html. The drawer markup is injected by the header
+    // widget, which dispatches 'header-ready' once #side-bar is in the DOM.
+    (function () {
+      const MOBILE = window.matchMedia('(max-width: 768px)');
+      let bound = false;
+
+      function placeSidebar() {
+        const content = document.getElementById('board-sidebar-content');
+        const drawer = document.getElementById('header-sidebar-content');
+        const sidebar = document.querySelector('.console-sidebar');
+        if (!content || !drawer || !sidebar) return;
+
+        if (MOBILE.matches && !drawer.contains(content)) {
+          drawer.appendChild(content);
+        } else if (!MOBILE.matches && !sidebar.contains(content)) {
+          sidebar.appendChild(content);
+        }
+      }
+
+      function bind() {
+        placeSidebar();
+        if (!bound) {
+          MOBILE.addEventListener('change', placeSidebar);
+          bound = true;
+        }
+      }
+
+      document.addEventListener('header-ready', bind, { once: true });
+      // In case the header widget initialized before this script registered.
+      if (document.getElementById('header-sidebar-content')) bind();
+    })();
+  </script>
 
   <script type="module" src="/agent/epistery/message-board/client/app.js"></script>
 </body>

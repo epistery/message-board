@@ -77,6 +77,9 @@ async function checkAuthStatus() {
         admin: accessData.level >= 3  // Level 3 (admin) or higher
       };
 
+      // Reveal the admin button (beside the identity block) for admins only.
+      updateAdminLink();
+
       // Authorized: load posts, load unread counts, connect WebSocket
       await loadPosts();
       await loadUnreadCounts();
@@ -102,6 +105,13 @@ async function checkAuthStatus() {
     console.error('[message-board] Access check error:', error);
     hidePostForm();
   }
+}
+
+// Show the sidebar admin button only for admins (level >= 3).
+function updateAdminLink() {
+  const link = document.getElementById('admin-link');
+  if (!link) return;
+  link.style.display = permissions && permissions.admin ? 'flex' : 'none';
 }
 
 // Load channels
