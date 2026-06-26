@@ -1411,23 +1411,30 @@ export default class MessageBoardAgent {
    * Broadcast message to WebSocket clients on a specific domain
    */
   broadcast(message, domain) {
-    if (!this.wss) return;
+    const servers = (this.wssList && this.wssList.length) ? this.wssList : (this.wss ? [this.wss] : []);
+    if (!servers.length) {
+      console.log(`[message-board] broadcast '${message.type}' dropped — no WebSocket server (lost on hot-reload?)`);
+      return;
+    }
 
     let matched = 0;
     let total = 0;
-    this.wss.clients.forEach(client => {
-      total++;
-      if (client.readyState === 1 && client.domain === domain) {
-        matched++;
-        client.send(JSON.stringify(message));
-      }
-    });
+    const seen = [];
+    for (const wss of servers) {
+      wss.clients.forEach(client => {
+        total++;
+        seen.push(client.domain);
+        if (client.readyState === 1 && client.domain === domain) {
+          matched++;
+          client.send(JSON.stringify(message));
+        }
+      });
+    }
 
     // Loud failure: a live event reached no one despite connected clients.
     // Almost always a domain mismatch between the WS upgrade Host and req.hostname.
     if (total > 0 && matched === 0) {
-      const seen = [...this.wss.clients].map(c => c.domain).join(', ') || 'none';
-      console.log(`[message-board] broadcast '${message.type}' matched 0/${total} clients for domain '${domain}' — connected client domains: [${seen}]`);
+      console.log(`[message-board] broadcast '${message.type}' matched 0/${total} clients for domain '${domain}' — connected client domains: [${seen.join(', ')}]`);
     }
   }
 
@@ -1581,9 +1588,14 @@ export default class MessageBoardAgent {
    * @param {http.Server} server - HTTP server instance
    */
   initWebSocket(server) {
-    this.wss = new WebSocketServer({ server, path: '/agent/epistery/message-board/ws' });
+    // The host calls this once per HTTP server (http + https), and again for the
+    // freshly-built instance on every hot-reload. Track each WSS so we broadcast
+    // across all of them and can close them all on cleanup — a single this.wss
+    // field would drop the https server and leak listeners across reloads.
+    if (!this.wssList) this.wssList = [];
 
-    this.wss.on('connection', (ws, req) => {
+    const wss = new WebSocketServer({ server, path: '/agent/epistery/message-board/ws' });
+    wss.on('connection', (ws, req) => {
       // Track which domain this client connected from
       ws.domain = req.headers.host?.split(':')[0];
       console.log(`[message-board] WebSocket client connected from ${ws.domain}`);
@@ -1593,6 +1605,8 @@ export default class MessageBoardAgent {
       });
     });
 
+    this.wssList.push(wss);
+    this.wss = wss; // most-recent, for any legacy reference
     console.log('[message-board] WebSocket server initialized');
   }
 
@@ -1822,9 +1836,21 @@ export default class MessageBoardAgent {
       }
     }
 
-    if (this.wss) {
-      this.wss.close();
+    // Tear down every WSS this instance opened. Terminate live clients so their
+    // browsers reconnect to the next instance's fresh server after a hot-reload,
+    // and close the WSS so its server 'upgrade' listener is removed (no leak /
+    // no duplicate handlers across reloads).
+    const servers = (this.wssList && this.wssList.length) ? this.wssList : (this.wss ? [this.wss] : []);
+    for (const wss of servers) {
+      try {
+        wss.clients.forEach(c => { try { c.terminate(); } catch (_) {} });
+        wss.close();
+      } catch (e) {
+        console.error('[message-board] WSS close error:', e.message);
+      }
     }
+    this.wssList = [];
+    this.wss = null;
     console.log('[message-board] Agent cleanup');
   }
 
