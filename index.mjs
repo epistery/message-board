@@ -1545,11 +1545,16 @@ export default class MessageBoardAgent {
       // inside it even if mimi is slow or declines to reply.
       this.mimiWatch.set(watchKey, Date.now() + MIMI_WATCH_MS);
 
-      // Forward the poster's auth so mimi resolves to their session.
+      // Forward the poster's auth so mimi resolves to their session, and the
+      // RESOLVED public domain (req.hostname, via req.domain) — NOT req.headers.host,
+      // which behind the loopback reverse proxy is "127.0.0.1:PORT". Sending the raw
+      // Host made mimi (and every agent it proxies to: files, connector) resolve to
+      // the empty 127.0.0.1 domain store — the real cause of mimi's "File not found".
+      // trust proxy='loopback' means this X-Forwarded-Host is honored on the internal call.
       const headers = {
         'Content-Type': 'application/json',
-        'Host': req.headers.host,
-        'X-Forwarded-Host': req.headers.host
+        'Host': domain,
+        'X-Forwarded-Host': domain
       };
       if (req.headers.authorization) headers['Authorization'] = req.headers.authorization;
       if (req.headers.cookie) headers['Cookie'] = req.headers.cookie;
