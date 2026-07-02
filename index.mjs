@@ -31,7 +31,7 @@ const MIMI_WATCH_MS = 3 * 60 * 1000;
 export default class MessageBoardAgent {
   constructor(manifestConfig = {}) {
     this.manifestConfig = manifestConfig;
-    this.rootConfig = (new Config()).read('/');
+    this.rootConfig = null;
     this.epistery = null;
     this.wss = null;
 
@@ -52,6 +52,14 @@ export default class MessageBoardAgent {
   }
 
   /**
+   * Lazily load and cache the root config (a constructor can't await).
+   */
+  async getRootConfig() {
+    if (!this.rootConfig) this.rootConfig = await (new Config()).read('/');
+    return this.rootConfig;
+  }
+
+  /**
    * Get or create storage backend for a domain
    */
   async getStorage(domain) {
@@ -68,7 +76,7 @@ export default class MessageBoardAgent {
    */
   async getContract(domain) {
     const config = new Config();
-    config.setPath(domain);
+    await config.setPath(domain);
 
     const contractAddress = config.data?.contract_address;
     if (!contractAddress) {
@@ -94,9 +102,9 @@ export default class MessageBoardAgent {
     return new ethers.Contract(contractAddress, DomainAgentArtifact.abi, wallet);
   }
 
-  getDomainConfig(domain) {
+  async getDomainConfig(domain) {
     const config = new Config();
-    config.setPath(domain);
+    await config.setPath(domain);
 
     if (!config.data.messageBoard) {
       config.data.messageBoard = {
@@ -112,24 +120,24 @@ export default class MessageBoardAgent {
           allowSvg: this.manifestConfig.imageSettings?.allowSvg !== undefined ? this.manifestConfig.imageSettings.allowSvg : true
         }
       }
-      config.save();
+      await config.save();
     }
     return config;
   }
   /**
    * Get or initialize domain state
    */
-  getDomainState(domain) {
+  async getDomainState(domain) {
     if (!this.domainStates.has(domain)) {
       const config = new Config();
-      config.setPath(domain);
+      await config.setPath(domain);
 
       // Config.readFile throws ENOENT when the file doesn't exist yet (first
       // post on a domain) and returns a raw Buffer when it does — so parse it
       // and treat a missing file as the empty default.
       let batchData = { chain: [], lastHash: this.lastHash, lastFlush: Date.now() };
       try {
-        const raw = config.readFile('message-board-batch.json');
+        const raw = await config.readFile('message-board-batch.json');
         if (raw) batchData = JSON.parse(raw.toString());
       } catch (e) {
         if (e.code !== 'ENOENT') {
@@ -181,7 +189,7 @@ export default class MessageBoardAgent {
   // `list` are restricted and never published here. No parallel flag.
 
   async aiFeeds(domain) {
-    const config = this.getDomainConfig(domain);
+    const config = await this.getDomainConfig(domain);
     const channels = (config.data?.messageBoard?.channels || [])
       .map(c => typeof c === 'string' ? JSON.parse(c) : c)
       .filter(Boolean);
@@ -196,7 +204,7 @@ export default class MessageBoardAgent {
   // Raw posts for a feed id, in this agent's native shape. ai-discovery
   // computes content-hash ids and wraps in the envelope.
   async aiFeedPosts(domain, feedId, params = {}) {
-    const config = this.getDomainConfig(domain);
+    const config = await this.getDomainConfig(domain);
     const channels = (config.data?.messageBoard?.channels || [])
       .map(c => typeof c === 'string' ? JSON.parse(c) : c)
       .filter(Boolean);
@@ -223,9 +231,9 @@ export default class MessageBoardAgent {
   }
 
   attach(router) {
-    router.use((req, res, next) => {
+    router.use(async (req, res, next) => {
       req.domain = req.hostname || 'localhost';
-      req.boardConfig = this.getDomainConfig(req.domain);
+      req.boardConfig = await this.getDomainConfig(req.domain);
       if (!this.epistery && req.app.locals.epistery) {
         this.epistery = req.app.locals.epistery;
       }
@@ -412,7 +420,7 @@ export default class MessageBoardAgent {
 
         const channel = { name, list: list || null };
         req.boardConfig.data.messageBoard.channels.push(channel);
-        req.boardConfig.save();
+        await req.boardConfig.save();
 
         res.json({ success: true, channel });
       } catch (error) {
@@ -446,7 +454,7 @@ export default class MessageBoardAgent {
         }
 
         req.boardConfig.data.messageBoard.channels.splice(index, 1);
-        req.boardConfig.save();
+        await req.boardConfig.save();
 
         res.json({ success: true });
       } catch (error) {
@@ -485,7 +493,7 @@ export default class MessageBoardAgent {
         // the source of truth for feed-eligibility now.
         if ('feed' in channel) delete channel.feed;
         channels[index] = channel;
-        req.boardConfig.save();
+        await req.boardConfig.save();
 
         res.json({ success: true, channel });
       } catch (error) {
@@ -514,7 +522,7 @@ export default class MessageBoardAgent {
         }
 
         req.boardConfig.data.messageBoard.viewMode = viewMode;
-        req.boardConfig.save();
+        await req.boardConfig.save();
 
         res.json({ success: true, viewMode });
       } catch (error) {
@@ -563,7 +571,7 @@ export default class MessageBoardAgent {
         }
 
         // Save settings to config
-        req.boardConfig.save();
+        await req.boardConfig.save();
 
         res.json({ success: true, settings: imageSettings });
       } catch (error) {
@@ -1332,10 +1340,10 @@ export default class MessageBoardAgent {
    */
   async migrateLegacyData(domain, storage) {
     const config = new Config();
-    config.setPath(domain);
+    await config.setPath(domain);
 
     try {
-      const legacyData = config.readFile('message-board-posts.json');
+      const legacyData = await config.readFile('message-board-posts.json');
       const data = JSON.parse(legacyData.toString());
 
       console.log(`[message-board] Migrating ${data.posts.length} posts to storage...`);
@@ -1443,10 +1451,10 @@ export default class MessageBoardAgent {
    * authored by the domain contract address (fallback: the contract owner /
    * server wallet address). Cached per domain.
    */
-  getHostIdentity(domain) {
+  async getHostIdentity(domain) {
     if (this.hostIdentity.has(domain)) return this.hostIdentity.get(domain);
     const config = new Config();
-    config.setPath(domain);
+    await config.setPath(domain);
     let addr = config.data?.contract_address || null;
     if (!addr && config.data?.wallet?.mnemonic) {
       try { addr = ethers.Wallet.fromMnemonic(config.data.wallet.mnemonic).address; } catch (_) { /* ignore */ }
@@ -1469,7 +1477,7 @@ export default class MessageBoardAgent {
   async buildChannelTranscript(domain, channel, limit = 25) {
     const data = await this.readData(domain);
     const chan = channel || 'general';
-    const hostAddr = this.getHostIdentity(domain);
+    const hostAddr = await this.getHostIdentity(domain);
     // data.posts is newest-first; take the newest `limit`, then chronological.
     const recent = data.posts
       .filter(p => (p.channel || 'general') === chan)
@@ -1497,7 +1505,7 @@ export default class MessageBoardAgent {
       id: data.nextId++,
       text: String(text).trim(),
       image: null,
-      author: this.getHostIdentity(domain),
+      author: await this.getHostIdentity(domain),
       authorName: 'mimi',
       timestamp: Date.now(),
       comments: [],
@@ -1527,7 +1535,7 @@ export default class MessageBoardAgent {
     const domain = req.domain;
     const chan = channel || 'general';
     const watchKey = `${domain}:${chan}`;
-    const hostAddr = this.getHostIdentity(domain);
+    const hostAddr = await this.getHostIdentity(domain);
     try {
       // Never react to mimi's own posts (belt-and-suspenders: these don't come
       // through the HTTP routes, but guard anyway).
@@ -1653,7 +1661,8 @@ export default class MessageBoardAgent {
    * Upload data to IPFS
    */
   async uploadToIPFS(data) {
-    if (!this.rootConfig.ipfs.url) {
+    const rootConfig = await this.getRootConfig();
+    if (!rootConfig.ipfs.url) {
       console.warn('[message-board] IPFS URL not configured, skipping IPFS upload');
       return null;
     }
@@ -1663,7 +1672,7 @@ export default class MessageBoardAgent {
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
       formData.append('file', blob, 'post.json');
 
-      const response = await fetch(`${this.rootConfig.ipfs.url}/add`, {
+      const response = await fetch(`${rootConfig.ipfs.url}/add`, {
         method: 'POST',
         body: formData
       });
@@ -1679,7 +1688,7 @@ export default class MessageBoardAgent {
 
       return {
         hash: ipfsHash,
-        url: `${this.rootConfig.ipfs.gateway}/ipfs/${ipfsHash}`
+        url: `${rootConfig.ipfs.gateway}/ipfs/${ipfsHash}`
       };
     } catch (error) {
       console.error('[message-board] IPFS upload error:', error);
@@ -1692,7 +1701,7 @@ export default class MessageBoardAgent {
    * Returns the chained post data
    */
   async addPostToBatch(post, userSignature, domain) {
-    const state = this.getDomainState(domain);
+    const state = await this.getDomainState(domain);
 
     // Create hash chain entry
     const hash = this.hashPost(post, state.lastHash);
@@ -1747,10 +1756,10 @@ export default class MessageBoardAgent {
     state.lastHash = hash;
 
     // Save batch state
-    this.saveBatchState(domain);
+    await this.saveBatchState(domain);
 
     const config = new Config();
-    config.setPath(domain);
+    await config.setPath(domain);
     const batchThreshold = config.data.messageBoard.batchThreshold;
 
     console.log(`[message-board] Post added to batch chain for ${domain}. Total: ${state.postChain.length}/${batchThreshold}`);
@@ -1767,7 +1776,7 @@ export default class MessageBoardAgent {
    * Flush batched posts to blockchain
    */
   async flushBatch(domain) {
-    const state = this.getDomainState(domain);
+    const state = await this.getDomainState(domain);
 
     if (state.postChain.length === 0) {
       console.log(`[message-board] No posts to flush for ${domain}`);
@@ -1805,7 +1814,7 @@ export default class MessageBoardAgent {
       // Clear batch
       state.postChain = [];
       state.lastHash = crypto.createHash('sha256').update(state.lastHash).digest('hex');
-      this.saveBatchState(domain);
+      await this.saveBatchState(domain);
 
       console.log(`[message-board] Batch flush complete for ${domain}`);
     } catch (error) {
@@ -1816,17 +1825,17 @@ export default class MessageBoardAgent {
   /**
    * Save batch state to file
    */
-  saveBatchState(domain) {
-    const state = this.getDomainState(domain);
+  async saveBatchState(domain) {
+    const state = await this.getDomainState(domain);
     const config = new Config();
-    config.setPath(domain);
+    await config.setPath(domain);
 
     const batchData = {
       chain: state.postChain,
       lastHash: state.lastHash,
       lastFlush: Date.now()
     };
-    config.writeFile('message-board-batch.json', JSON.stringify(batchData, null, 2));
+    await config.writeFile('message-board-batch.json', JSON.stringify(batchData, null, 2));
   }
 
   /**

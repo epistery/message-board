@@ -13,7 +13,6 @@ test_modules
 .npm
 data/*
 data.json
-package-lock\.json
 .npmrc
 .env
 *.snap
