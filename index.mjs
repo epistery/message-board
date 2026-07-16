@@ -158,11 +158,12 @@ export default class MessageBoardAgent {
    * Demonstrates new contract architecture with isInACL()
    */
   async getPermissions(req) {
-    // Identity + ACL resolution is host-owned (req.me — same for human and MCP
-    // callers). Boards are read-open by default; an identified caller's read is
-    // gated by their ACL level.
-    const result = { address: req.me?.identityAddress, admin: false, edit: false, read: true };
-    if (!req.me?.identityAddress || !req.domainAcl) {
+    // Identity + ACL resolution is host-owned (req.me — same for human, MCP,
+    // and anonymous callers). Fail-closed: the owner's verdict is the only
+    // opinion. A public board is a domain declaration (aclStance
+    // {list:'default', access:1}), never an agent-side default.
+    const result = { address: req.me?.identityAddress || null, admin: false, edit: false, read: false };
+    if (!req.me || !req.domainAcl) {
       return result;
     }
     const access = await req.me.access('epistery/message-board');
@@ -340,44 +341,42 @@ export default class MessageBoardAgent {
           return ch;
         }).filter(ch => ch !== null);
 
-        // Always include "General" pseudo-channel for posts without a channel
-        const accessibleChannels = [{ name: 'general', list: null, isPseudo: true }];
+        // The owner's verdict covers anonymous callers too: a domain that
+        // declares a public stance ({list:'default', access:1}) opens its
+        // no-list channels to everyone; the standard stance yields level 0
+        // and nothing is visible. List-bound channels always need an
+        // identity to test membership against.
+        const access = (req.me && req.domainAcl)
+          ? await req.me.access('epistery/message-board')
+          : { level: 0 };
 
-        // Filter channels based on user's access
-        if (req.me?.identityAddress) {
-          // Check user's access level to message-board
-          const access = await req.domainAcl.checkAgentAccess(
-            'epistery/message-board',
-            req.me.identityAddress,
-            req.hostname
-          );
+        const accessibleChannels = [];
+        if (access.level >= 1) {
+          // "General" pseudo-channel for posts without a channel
+          accessibleChannels.push({ name: 'general', list: null, isPseudo: true });
+        }
 
-          // Admins (level 3) see all channels
-          if (access.level >= 3) {
-            accessibleChannels.push(...channels);
-          } else {
-            // Non-admins see only channels they have access to
-            for (const channel of channels) {
-              if (!channel.list) {
-                // No ACL specified - use agent access level
-                if (access.level >= 1) { // Level 1 (reader) or higher
-                  accessibleChannels.push(channel);
-                }
-              } else {
-                // Check specific list access
-                const isInList = await req.domainAcl.chain.contract.isInACL(
-                  channel.list,
-                  req.me.identityAddress
-                );
-                if (isInList) {
-                  accessibleChannels.push(channel);
-                }
+        // Admins (level 3) see all channels
+        if (access.level >= 3) {
+          accessibleChannels.push(...channels);
+        } else {
+          for (const channel of channels) {
+            if (!channel.list) {
+              // No ACL specified - use agent access level
+              if (access.level >= 1) { // Level 1 (reader) or higher
+                accessibleChannels.push(channel);
+              }
+            } else if (req.me?.identityAddress) {
+              // Check specific list access
+              const isInList = await req.domainAcl.chain.contract.isInACL(
+                channel.list,
+                req.me.identityAddress
+              );
+              if (isInList) {
+                accessibleChannels.push(channel);
               }
             }
           }
-        } else {
-          // No authenticated client - no access (default deny)
-          accessibleChannels.length = 0;
         }
 
         res.json(accessibleChannels);
@@ -1152,32 +1151,30 @@ export default class MessageBoardAgent {
    * Check if user has admin permission
    */
   // Returns a Set of channel names accessible to the requesting user.
-  // Always includes 'general'. Unauthenticated users only see channels without an ACL.
+  // The owner's verdict governs — a declared-public stance opens no-list
+  // channels (and 'general') to anonymous callers; the standard stance
+  // yields nothing. List-bound channels need an identity for membership.
   async getAccessibleChannelNames(req) {
     let channels = req.boardConfig.data.messageBoard.channels || [];
     channels = channels.map(ch => typeof ch === 'string' ? JSON.parse(ch) : ch).filter(Boolean);
 
-    const accessible = new Set(['general']);
+    const accessible = new Set();
+    const access = (req.me && req.domainAcl)
+      ? await req.me.access('epistery/message-board')
+      : { level: 0 };
 
-    if (req.me?.identityAddress) {
-      const access = await req.domainAcl.checkAgentAccess(
-        'epistery/message-board', req.me.identityAddress, req.hostname
-      );
-      if (access.level >= 3) {
-        channels.forEach(ch => accessible.add(ch.name));
-      } else {
-        for (const ch of channels) {
-          if (!ch.list) {
-            if (access.level >= 1) accessible.add(ch.name);
-          } else {
-            const isInList = await req.domainAcl.chain.contract.isInACL(ch.list, req.me.identityAddress);
-            if (isInList) accessible.add(ch.name);
-          }
+    if (access.level >= 1) accessible.add('general');
+    if (access.level >= 3) {
+      channels.forEach(ch => accessible.add(ch.name));
+    } else {
+      for (const ch of channels) {
+        if (!ch.list) {
+          if (access.level >= 1) accessible.add(ch.name);
+        } else if (req.me?.identityAddress) {
+          const isInList = await req.domainAcl.chain.contract.isInACL(ch.list, req.me.identityAddress);
+          if (isInList) accessible.add(ch.name);
         }
       }
-    } else {
-      // Unauthenticated: no access (default deny)
-      accessible.delete('general');
     }
 
     return accessible;
