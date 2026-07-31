@@ -858,8 +858,18 @@ export default class MessageBoardAgent {
           return res.status(404).json({ error: 'Post not found' });
         }
 
+        // Posts predating the `comments: []` initializer have no array at all,
+        // and the browser UI guards for that everywhere it reads. This write
+        // path is now reachable over MCP (message_reply), where replying to an
+        // old post is routine — so normalize instead of throwing a 500.
+        if (!Array.isArray(post.comments)) post.comments = [];
+
+        // Sequential per-post id, not Date.now(): edit/delete address a reply
+        // by id, and two replies landing in the same millisecond would collide.
+        const commentId = post.comments.reduce((max, c) => Math.max(max, c.id || 0), 0) + 1;
+
         const comment = {
-          id: Date.now(),
+          id: commentId,
           text: text.trim(),
           author: permission.user.address,
           authorName: permission.user.name || null,

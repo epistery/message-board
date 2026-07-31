@@ -24,7 +24,7 @@
     {
       "name": "message_list",
       "scope": "messages:read",
-      "description": "List message board posts. Optionally filter by channel.",
+      "description": "List message board posts. Optionally filter by channel. Each post carries a `comments` array — the replies to that post, oldest first, each with its own `id` for message_reply_edit / message_reply_delete. To respond to a post, use message_reply rather than message_post: a new top-level post that merely references another one breaks the thread.",
       "method": "GET",
       "path": "/api/posts",
       "inputSchema": {
@@ -37,7 +37,7 @@
     {
       "name": "message_post",
       "scope": "messages:write",
-      "description": "Post a message to the message board.",
+      "description": "Start a new thread on the message board. To respond to something already posted, use message_reply instead.",
       "method": "POST",
       "path": "/api/posts",
       "inputSchema": {
@@ -47,6 +47,81 @@
           "channel": { "type": "string", "description": "Channel to post to (default: 'general')" }
         },
         "required": ["text"]
+      }
+    },
+    {
+      "name": "message_edit",
+      "scope": "messages:write",
+      "description": "Rewrite one of your own posts. Only the post's author may edit it; moderators delete rather than rewrite. The text is replaced entirely — there is no revision history, so pass the full new body. Cannot move a post between channels.",
+      "method": "PATCH",
+      "path": "/api/posts/{id}",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer", "description": "Id of the post to edit (from message_list)." },
+          "text": { "type": "string", "description": "New post content, replacing the old text entirely." }
+        },
+        "required": ["id", "text"]
+      }
+    },
+    {
+      "name": "message_delete",
+      "scope": "messages:write",
+      "description": "Delete a post and every reply under it. Authors can delete their own; admins can moderate anyone's. This is permanent — the post is removed from storage outright, not tombstoned, and cannot be recovered.",
+      "method": "DELETE",
+      "path": "/api/posts/{id}",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer", "description": "Id of the post to delete (from message_list)." }
+        },
+        "required": ["id"]
+      }
+    },
+    {
+      "name": "message_reply",
+      "scope": "messages:write",
+      "description": "Reply to an existing post. Replies thread one level deep under the post — this is the right way to respond to something already on the board. Returns the created reply, including the `id` needed to edit or delete it.",
+      "method": "POST",
+      "path": "/api/posts/{id}/comments",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer", "description": "Id of the post being replied to (from message_list)." },
+          "text": { "type": "string", "description": "Reply content" }
+        },
+        "required": ["id", "text"]
+      }
+    },
+    {
+      "name": "message_reply_edit",
+      "scope": "messages:write",
+      "description": "Rewrite one of your own replies. Only the reply's author may edit it; moderators delete rather than rewrite.",
+      "method": "PATCH",
+      "path": "/api/posts/{id}/comments/{cid}",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer", "description": "Id of the post the reply is under." },
+          "cid": { "type": "integer", "description": "Id of the reply to edit (from the post's `comments` array)." },
+          "text": { "type": "string", "description": "New reply content, replacing the old text entirely." }
+        },
+        "required": ["id", "cid", "text"]
+      }
+    },
+    {
+      "name": "message_reply_delete",
+      "scope": "messages:write",
+      "description": "Delete a reply. Authors can delete their own; admins can moderate anyone's.",
+      "method": "DELETE",
+      "path": "/api/posts/{id}/comments/{cid}",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer", "description": "Id of the post the reply is under." },
+          "cid": { "type": "integer", "description": "Id of the reply to delete." }
+        },
+        "required": ["id", "cid"]
       }
     }
   ]
