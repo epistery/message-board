@@ -11,6 +11,9 @@ import http from "http";
 
 const require = createRequire(import.meta.url);
 const ethers = require('ethers');
+// Root of the shared brand kit (@epistery/art) — the common source for the
+// mark and the identicon utility, served under this agent's baseUrl at /art.
+const ART_DIR = path.dirname(require.resolve('@epistery/art'));
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -248,6 +251,11 @@ export default class MessageBoardAgent {
 
     // Serve static files
     router.use('/client', express.static(path.join(__dirname, 'client')));
+
+    // Brand kit — the common identicon/mark source, served under this agent's
+    // baseUrl. Client code imports it as ../art/identicon.mjs (relative to
+    // /client), which resolves here to <baseUrl>/art/identicon.mjs.
+    router.use('/art', express.static(ART_DIR));
 
     // Serve icon
     router.get('/icon.svg', (req, res) => {

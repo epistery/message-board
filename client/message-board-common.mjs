@@ -1,5 +1,8 @@
 // Shared Message Board functionality for both board and chat views
 import MarkUp from './MarkUp.mjs';
+// The common epistery identicon (@epistery/art), served by the agent at
+// <baseUrl>/art. This module lives at <baseUrl>/client, so ../art resolves.
+import { identiconDataUrl } from '../art/identicon.mjs';
 
 export class MessageBoardCommon {
   constructor() {
@@ -498,51 +501,11 @@ export class MessageBoardCommon {
     return div.innerHTML;
   }
 
-  // Generate avatar from address (deterministic)
+  // Author avatar — the common epistery identicon, deterministic per address.
+  // (Was a hand-rolled HSL/SVG generator; now delegates to @epistery/art so
+  // this edition shows the same mark as the app edition and the host.)
   generateAvatar(address, size = 40) {
-    const hash = address.toLowerCase();
-    const seed = parseInt(hash.slice(2, 10), 16);
-
-    const hue1 = (seed % 360);
-    const hue2 = ((seed * 7) % 360);
-    const saturation = 65 + ((seed % 20));
-    const lightness = 45 + ((seed % 15));
-
-    const color1 = `hsl(${hue1}, ${saturation}%, ${lightness}%)`;
-    const color2 = `hsl(${hue2}, ${saturation}%, ${lightness + 10}%)`;
-
-    const pattern = (seed % 4);
-
-    let svg = '';
-    switch(pattern) {
-      case 0:
-        svg = `<svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
-          <rect width="${size}" height="${size}" fill="${color1}"/>
-          <path d="M0,0 L${size},${size} M${size/2},${-size/2} L${size*1.5},${size/2} M${-size/2},${size/2} L${size/2},${size*1.5}" stroke="${color2}" stroke-width="${size/4}"/>
-        </svg>`;
-        break;
-      case 1:
-        svg = `<svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
-          <rect width="${size}" height="${size}" fill="${color1}"/>
-          <circle cx="${size/2}" cy="${size/2}" r="${size/3}" fill="${color2}"/>
-          <circle cx="${size/2}" cy="${size/2}" r="${size/6}" fill="${color1}"/>
-        </svg>`;
-        break;
-      case 2:
-        svg = `<svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
-          <rect width="${size}" height="${size}" fill="${color1}"/>
-          <polygon points="${size/2},${size/6} ${size*5/6},${size*5/6} ${size/6},${size*5/6}" fill="${color2}"/>
-        </svg>`;
-        break;
-      case 3:
-        svg = `<svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
-          <rect width="${size}" height="${size}" fill="${color1}"/>
-          <rect x="${size/4}" y="${size/4}" width="${size/2}" height="${size/2}" fill="${color2}" transform="rotate(45 ${size/2} ${size/2})"/>
-        </svg>`;
-        break;
-    }
-
-    return 'data:image/svg+xml;base64,' + btoa(svg);
+    return identiconDataUrl(address, size);
   }
 
   // Copy address to clipboard
