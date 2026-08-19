@@ -314,11 +314,17 @@ function renderMessages() {
   // markdown rendering can't leak out and wrap the comment form (which would
   // cause clicking the input to navigate as if it were inside an anchor).
   for (const post of messages) {
-    const el = container.querySelector(`[data-post-text="${post.id}"]`);
+    // Comment ids are sequential per-post (index.mjs), so every post's first
+    // reply is id 1, the second is id 2, etc. Scope all lookups to this post's
+    // element — a container-wide querySelector would match the first post that
+    // happens to share the id and leave every later post's reply body blank.
+    const postEl = container.querySelector(`[data-message-id="${post.id}"]`);
+    if (!postEl) continue;
+    const el = postEl.querySelector(`[data-post-text="${post.id}"]`);
     if (el) el.innerHTML = mb.markup ? mb.markup.render(post.text) : mb.escapeHtml(post.text);
     if (post.comments) {
       for (const c of post.comments) {
-        const ce = container.querySelector(`[data-comment-text="${c.id}"]`);
+        const ce = postEl.querySelector(`[data-comment-text="${c.id}"]`);
         if (ce) ce.innerHTML = mb.markup ? mb.markup.render(c.text) : mb.escapeHtml(c.text);
       }
     }
@@ -425,7 +431,10 @@ window.editComment = function(postId, commentId) {
   if (!post) return;
   const comment = (post.comments || []).find(c => c.id === commentId);
   if (!comment) return;
-  const commentEl = document.querySelector(`[data-comment-id="${commentId}"]`);
+  // Comment ids are per-post, so scope the lookup to this post's element —
+  // a document-wide query would grab a same-id reply on a different post.
+  const postEl = document.querySelector(`[data-message-id="${postId}"]`);
+  const commentEl = postEl && postEl.querySelector(`[data-comment-id="${commentId}"]`);
   if (!commentEl) return;
   const textEl = commentEl.querySelector('.comment-text');
   const actionsEl = commentEl.querySelector('.comment-actions');
