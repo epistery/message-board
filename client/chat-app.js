@@ -6,6 +6,7 @@ let currentImageDataUrl = null;
 let currentChannel = null;
 let channels = [];
 let unreadCounts = {};
+let loadingOlder = false; // guards the scroll-to-top older-page fetch
 
 // Initialize
 async function init() {
@@ -40,6 +41,10 @@ async function init() {
   if (currentChannel) {
     markChannelRead(currentChannel);
   }
+
+  // Load older messages when the user scrolls to the top of the transcript.
+  const messagesEl = document.getElementById('chat-messages');
+  if (messagesEl) messagesEl.addEventListener('scroll', maybeLoadOlder);
 
   // Initial render
   renderMessages();
@@ -632,6 +637,29 @@ function scrollToBottom() {
   const messagesContainer = document.getElementById('chat-messages');
   if (messagesContainer) {
     messagesContainer.scrollTop = messagesContainer.scrollHeight;
+  }
+}
+
+// When the transcript is scrolled near the top, pull the next older page and
+// prepend it, holding the viewport on the same message (no jump). Messages are
+// rendered oldest-first, so older posts land at the top and grow scrollHeight.
+async function maybeLoadOlder() {
+  const c = document.getElementById('chat-messages');
+  if (!c || loadingOlder || !mb.hasMore) return;
+  if (c.scrollTop > 60) return;
+  loadingOlder = true;
+  const prevHeight = c.scrollHeight;
+  const prevTop = c.scrollTop;
+  try {
+    const added = await mb.loadOlderPosts();
+    if (added > 0) {
+      renderMessages();
+      c.scrollTop = prevTop + (c.scrollHeight - prevHeight);
+    }
+  } catch (error) {
+    console.error('[chat] Failed to load older messages:', error);
+  } finally {
+    loadingOlder = false;
   }
 }
 

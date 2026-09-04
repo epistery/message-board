@@ -12,6 +12,12 @@ export class MessageBoardCommon {
     this.permissions = null;
     this.markup = null;
     this.currentChannel = null;
+    // Paging cursor over the currently-loaded channel. `posts` is newest-first;
+    // `oldestCursor` is the id of the oldest loaded post (the `before` value for
+    // the next older page), and `hasMore` says whether older posts remain.
+    this.hasMore = false;
+    this.oldestCursor = null;
+    this.pageSize = 30;
   }
 
   async init() {
@@ -60,9 +66,27 @@ export class MessageBoardCommon {
     }
   }
 
-  // Load posts from API
+  // Fetch one page from the paged API. Sending `limit` opts into paged mode,
+  // so the server returns { posts, hasMore, nextBefore } and reads only that
+  // page's bodies. This is the single place that knows the endpoint contract.
+  async fetchPage({ channel, before, limit = this.pageSize } = {}) {
+    const params = new URLSearchParams();
+    if (channel) params.set('channel', channel);
+    if (before != null) params.set('before', before);
+    params.set('limit', String(limit));
+    const response = await fetch('/agent/epistery/message-board/api/posts?' + params.toString());
+    if (!response.ok) throw new Error('Failed to load posts');
+    return response.json();
+  }
+
+  // Load the newest page for the current channel, resetting the cursor.
   async loadPosts() {
     try {
+      // Reset the cursor up-front so a stale cache paint can't drive an older
+      // fetch against the previous channel's position before the fresh page lands.
+      this.hasMore = false;
+      this.oldestCursor = null;
+
       const cachedPosts = localStorage.getItem('message-board-posts');
       if (cachedPosts) {
         try {
@@ -72,22 +96,30 @@ export class MessageBoardCommon {
         }
       }
 
-      // Build URL with optional channel filter
-      let url = '/agent/epistery/message-board/api/posts';
-      if (this.currentChannel) {
-        url += `?channel=${encodeURIComponent(this.currentChannel)}`;
-      }
-
-      const response = await fetch(url);
-      if (!response.ok) throw new Error('Failed to load posts');
-
-      this.posts = await response.json();
+      const page = await this.fetchPage({ channel: this.currentChannel });
+      this.posts = page.posts;
+      this.hasMore = page.hasMore;
+      this.oldestCursor = page.nextBefore;
       this.savePosts();
       return this.posts;
     } catch (error) {
       console.error('[message-board] Load error:', error);
       throw error;
     }
+  }
+
+  // Fetch the next older page and append it (posts stays newest-first).
+  // Returns the number of older posts actually added.
+  async loadOlderPosts() {
+    if (!this.hasMore || this.oldestCursor == null) return 0;
+    const page = await this.fetchPage({ channel: this.currentChannel, before: this.oldestCursor });
+    const existing = new Set(this.posts.map(p => p.id));
+    const older = page.posts.filter(p => !existing.has(p.id));
+    this.posts = this.posts.concat(older);
+    this.hasMore = page.hasMore;
+    this.oldestCursor = page.nextBefore;
+    this.savePosts();
+    return older.length;
   }
 
   // Save posts to localStorage

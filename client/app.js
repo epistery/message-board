@@ -13,6 +13,11 @@ let markup = null; // Markdown renderer
 let channels = []; // Available channels
 let currentChannel = null; // Currently selected channel (null = general)
 let unreadCounts = {}; // { channelName: count }
+// Paging cursor over the loaded channel. `posts` is newest-first; `oldestCursor`
+// is the id of the oldest loaded post (the `before` for the next older page).
+let hasMore = false;
+let oldestCursor = null;
+let loadingMore = false;
 
 // Initialize
 async function init() {
@@ -249,6 +254,11 @@ async function selectChannel(channelName) {
 // Load posts from API or localStorage
 async function loadPosts() {
   try {
+    // Reset the cursor up-front so a stale cache paint can't drive an older
+    // fetch against the previous channel's position before the fresh page lands.
+    hasMore = false;
+    oldestCursor = null;
+
     // First, try to load from localStorage for instant display
     const cachedPosts = localStorage.getItem('message-board-posts');
     if (cachedPosts) {
@@ -260,14 +270,12 @@ async function loadPosts() {
       }
     }
 
-    // Then fetch fresh data from server (filtered by channel)
-    const url = currentChannel && currentChannel !== 'general'
-      ? `/agent/epistery/message-board/api/posts?channel=${encodeURIComponent(currentChannel)}`
-      : '/agent/epistery/message-board/api/posts';
-    const response = await fetch(url);
-    if (!response.ok) throw new Error('Failed to load posts');
-
-    posts = await response.json();
+    // Then fetch the newest page from the server, resetting the cursor.
+    const channel = currentChannel && currentChannel !== 'general' ? currentChannel : null;
+    const page = await mb.fetchPage({ channel });
+    posts = page.posts;
+    hasMore = page.hasMore;
+    oldestCursor = page.nextBefore;
     savePosts();
     renderPosts();
   } catch (error) {
@@ -278,6 +286,31 @@ async function loadPosts() {
     }
   }
 }
+
+// Fetch the next older page and append it (posts stays newest-first, so older
+// posts render below the current ones). Bound to the "Load older posts" button.
+window.loadMorePosts = async function() {
+  if (loadingMore || !hasMore || oldestCursor == null) return;
+  loadingMore = true;
+  const btn = document.getElementById('load-more-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
+  try {
+    const channel = currentChannel && currentChannel !== 'general' ? currentChannel : null;
+    const page = await mb.fetchPage({ channel, before: oldestCursor });
+    const existing = new Set(posts.map(p => p.id));
+    const older = page.posts.filter(p => !existing.has(p.id));
+    posts = posts.concat(older);
+    hasMore = page.hasMore;
+    oldestCursor = page.nextBefore;
+    savePosts();
+    renderPosts();
+  } catch (error) {
+    console.error('[message-board] Load more error:', error);
+    if (btn) { btn.disabled = false; btn.textContent = 'Load older posts'; }
+  } finally {
+    loadingMore = false;
+  }
+};
 
 // Save posts to localStorage (limit to most recent 50 posts to avoid quota issues)
 function savePosts() {
@@ -334,7 +367,12 @@ function renderPosts() {
     return;
   }
 
-  container.innerHTML = posts.map(post => renderPost(post)).join('');
+  container.innerHTML = posts.map(post => renderPost(post)).join('')
+    + (hasMore
+      ? `<div class="load-more-row" style="text-align:center;padding:var(--spacer);">
+           <button type="button" id="load-more-btn" onclick="event.preventDefault();window.loadMorePosts();return false;">Load older posts</button>
+         </div>`
+      : '');
 
   // Populate post and comment text in isolation. Setting innerHTML on each
   // element scopes the HTML parser to that element, so an unclosed tag (e.g.

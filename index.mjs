@@ -48,6 +48,11 @@ export default class MessageBoardAgent {
     // Storage backends (per domain)
     this.storageBackends = new Map();
 
+    // Per-domain promise-chain mutex serializing index mutations (create/delete).
+    // One host process owns a domain, so this fully serializes read-modify-write
+    // of posts/index.json and prevents concurrent creates colliding on an id.
+    this.indexLocks = new Map();
+
     // Mimi participation state
     this.mimiWatch = new Map();      // `${domain}:${channel}` -> watch-until epoch ms
     this.mimiInFlight = new Set();   // `${domain}:${channel}` currently composing
@@ -597,15 +602,17 @@ export default class MessageBoardAgent {
         const vault = await req.userVault.getShared();
         const lastRead = vault.messageBoard?.lastRead || {};
 
-        const data = await this.readData(req.domain);
+        // Counts need only {timestamp, channel}, which the index carries — no
+        // need to read any post bodies (this runs on every channel render).
+        const index = await this.readIndex(req.domain);
         const accessible = await this.getAccessibleChannelNames(req);
 
         const counts = {};
         for (const channel of accessible) {
           const cutoff = lastRead[channel] || 0;
-          const channelPosts = data.posts.filter(post => {
-            const postChannel = post.channel || 'general';
-            return postChannel === channel && post.timestamp > cutoff;
+          const channelPosts = index.posts.filter(meta => {
+            const metaChannel = meta.channel || 'general';
+            return metaChannel === channel && meta.timestamp > cutoff;
           });
           counts[channel] = channelPosts.length;
         }
@@ -639,53 +646,59 @@ export default class MessageBoardAgent {
       }
     });
 
-    // Get posts filtered by channel access — server enforces ACL, not client
+    // Get posts filtered by channel access — server enforces ACL, not client.
+    //
+    // Two modes on one route:
+    //  - Legacy full list (no paging params): returns the whole accessible
+    //    array, unchanged. MCP (message_list) and any non-paged caller depend
+    //    on this bare-array shape, so it is preserved exactly.
+    //  - Paged (limit and/or before present): selects a page from the index
+    //    WITHOUT reading every post body, reads only that page's bodies, and
+    //    returns { posts, hasMore, nextBefore }. This is the hot path the human
+    //    board uses, so a long-lived channel no longer reads O(all posts) files
+    //    on every view. Ids are monotonic, so a post id doubles as the cursor.
     router.get('/api/posts', async (req, res) => {
       try {
-        const data = await this.readData(req.domain);
-        const { channel } = req.query;
-
-        // Determine which channels this user may see
+        const { channel, before } = req.query;
         const accessible = await this.getAccessibleChannelNames(req);
 
-        // Strip posts from channels the user cannot access
-        let posts = data.posts.filter(post => accessible.has(post.channel || 'general'));
-
-        // Further narrow by requested channel
-        if (channel) {
-          if (!accessible.has(channel)) {
-            return res.status(403).json({ error: 'Access denied' });
-          }
-          if (channel === 'general') {
-            posts = posts.filter(post => !post.channel || post.channel === 'general');
-          } else {
-            posts = posts.filter(post => post.channel === channel);
-          }
+        if (channel && !accessible.has(channel)) {
+          return res.status(403).json({ error: 'Access denied' });
         }
 
-        // Enrich posts/comments with the alias name from DomainAcl when authorName
-        // is missing. Names are not unique (one person, multiple device wallets may
-        // share an alias), but the lookup is address→name only, so that's fine.
-        try {
-          if (req.domainAcl) {
-            const nameMap = await req.domainAcl.getNameMap();
-            const lookup = (addr) => addr ? (nameMap.get(addr.toLowerCase()) || null) : null;
-            posts = posts.map(post => {
-              const enriched = { ...post, authorName: post.authorName || lookup(post.author) };
-              if (Array.isArray(post.comments)) {
-                enriched.comments = post.comments.map(c => ({
-                  ...c,
-                  authorName: c.authorName || lookup(c.author)
-                }));
-              }
-              return enriched;
-            });
-          }
-        } catch (e) {
-          console.error('[message-board] Name enrichment failed:', e.message);
+        // Does a post (or index meta) in channel `ch` belong in this response?
+        const matchChannel = (ch) => {
+          const c = ch || 'general';
+          if (!accessible.has(c)) return false;
+          if (!channel) return true;
+          if (channel === 'general') return !ch || ch === 'general';
+          return ch === channel;
+        };
+
+        const paged = req.query.limit !== undefined || before !== undefined;
+
+        if (!paged) {
+          const data = await this.readData(req.domain);
+          const posts = await this.enrichNames(req, data.posts.filter(p => matchChannel(p.channel)));
+          return res.json(posts);
         }
 
-        res.json(posts);
+        // Paged: choose the page from the index (id-desc = newest first), then
+        // read only the bodies on that page.
+        const limit = Math.min(parseInt(req.query.limit) || 30, 100);
+        const index = await this.readIndex(req.domain);
+        let metas = (index.posts || []).filter(m => matchChannel(m.channel));
+        metas.sort((a, b) => b.id - a.id);
+        if (before !== undefined) {
+          const beforeId = parseInt(before);
+          metas = metas.filter(m => m.id < beforeId);
+        }
+        const pageMetas = metas.slice(0, limit);
+        const hasMore = metas.length > pageMetas.length;
+        const bodies = await this.readPostBodies(req.domain, pageMetas);
+        const posts = await this.enrichNames(req, bodies);
+        const nextBefore = pageMetas.length ? pageMetas[pageMetas.length - 1].id : null;
+        res.json({ posts, hasMore, nextBefore });
       } catch (error) {
         res.status(500).json({ error: error.message });
       }
@@ -696,7 +709,12 @@ export default class MessageBoardAgent {
       try {
         console.log('[message-board] Received post request');
 
-        const { text, image, channel } = req.body;
+        const { text, channel } = req.body;
+        // `image` is the venue-formatted image that gets stored. A message board
+        // is expected to format uploads for the venue (SVG sanitization here), so
+        // this is reassigned to the sanitized form below; byte-perfect fidelity is
+        // what Files is for, not the board.
+        let { image } = req.body;
 
         if ((!text || text.trim().length === 0) && !image) {
           return res.status(400).json({ error: 'Text or image is required' });
@@ -746,12 +764,11 @@ export default class MessageBoardAgent {
             return res.status(400).json({ error: 'SVG images are not allowed on this board' });
           }
 
-          // Sanitize SVG if provided
+          // Sanitize SVG if provided — the sanitized form is what gets stored
+          // and replayed to the venue.
           if (isSvg) {
             try {
-              const sanitizedSvg = this.sanitizeSvg(image);
-              // Replace original with sanitized version
-              req.body.image = sanitizedSvg;
+              image = this.sanitizeSvg(image);
             } catch (error) {
               console.error('[message-board] SVG sanitization error:', error);
               return res.status(400).json({ error: 'Invalid or malicious SVG content' });
@@ -772,9 +789,9 @@ export default class MessageBoardAgent {
           });
         }
 
-        const data = await this.readData(req.domain);
-        const post = {
-          id: data.nextId++,
+        // Append incrementally — assigns the id, writes the body, and prepends
+        // the index meta under the index lock. No full-board read.
+        const post = await this.createPost(req.domain, {
           text: text.trim(),
           image: image || null,
           author: permission.user.address,
@@ -782,16 +799,7 @@ export default class MessageBoardAgent {
           timestamp: Date.now(),
           comments: [],
           channel: channel || null
-        };
-
-        // Add to local storage
-        data.posts.unshift(post);
-
-        // Write individual post file
-        await this.writePost(req.domain, post);
-
-        // Update index
-        await this.writeData(req.domain, data);
+        });
 
         // Broadcast immediately
         this.broadcast({ type: 'new-post', post }, req.domain);
@@ -859,8 +867,7 @@ export default class MessageBoardAgent {
           });
         }
 
-        const data = await this.readData(req.domain);
-        const post = data.posts.find(p => p.id === postId);
+        const post = await this.readPost(req.domain, postId);
 
         if (!post) {
           return res.status(404).json({ error: 'Post not found' });
@@ -886,9 +893,8 @@ export default class MessageBoardAgent {
 
         post.comments.push(comment);
 
-        // Write updated post with new comment
+        // A comment doesn't change the post's index meta, so write only the body.
         await this.writePost(req.domain, post);
-        await this.writeData(req.domain, data);
 
         this.broadcast({ type: 'new-comment', postId, comment }, req.domain);
         res.json(comment);
@@ -912,8 +918,7 @@ export default class MessageBoardAgent {
         }
 
         const userAddress = req.me.identityAddress;
-        const data = await this.readData(req.domain);
-        const post = data.posts.find(p => p.id === postId);
+        const post = await this.readPost(req.domain, postId);
 
         if (!post) {
           return res.status(404).json({ error: 'Post not found' });
@@ -931,13 +936,13 @@ export default class MessageBoardAgent {
           });
         }
 
-        // Delete the post from storage
-        await this.deletePost(req.domain, postId);
-
-        // Remove from index
-        const index = data.posts.findIndex(p => p.id === postId);
-        data.posts.splice(index, 1);
-        await this.writeData(req.domain, data);
+        // Remove the body and its index meta under the index lock.
+        await this.withIndexLock(req.domain, async () => {
+          await this.deletePost(req.domain, postId);
+          const index = await this.readIndex(req.domain);
+          index.posts = index.posts.filter(m => m.id !== postId);
+          await this.writeIndex(req.domain, index);
+        });
 
         this.broadcast({ type: 'delete-post', postId }, req.domain);
         res.json({ success: true });
@@ -962,8 +967,7 @@ export default class MessageBoardAgent {
         }
 
         const userAddress = req.me.identityAddress;
-        const data = await this.readData(req.domain);
-        const post = data.posts.find(p => p.id === postId);
+        const post = await this.readPost(req.domain, postId);
 
         if (!post) {
           return res.status(404).json({ error: 'Post not found' });
@@ -980,9 +984,8 @@ export default class MessageBoardAgent {
         post.text = text.trim();
         post.editedAt = Date.now();
 
-        // Write updated post
+        // Text isn't in the index meta, so write only the body.
         await this.writePost(req.domain, post);
-        await this.writeData(req.domain, data);
 
         this.broadcast({ type: 'edit-post', post }, req.domain);
         res.json(post);
@@ -1006,8 +1009,7 @@ export default class MessageBoardAgent {
           return res.status(401).json({ error: 'Authentication required' });
         }
         const userAddress = req.me.identityAddress;
-        const data = await this.readData(req.domain);
-        const post = data.posts.find(p => p.id === postId);
+        const post = await this.readPost(req.domain, postId);
         if (!post) return res.status(404).json({ error: 'Post not found' });
 
         const comment = (post.comments || []).find(c => c.id === commentId);
@@ -1020,8 +1022,8 @@ export default class MessageBoardAgent {
         comment.text = text.trim();
         comment.editedAt = Date.now();
 
+        // Comment edits don't touch the index meta, so write only the body.
         await this.writePost(req.domain, post);
-        await this.writeData(req.domain, data);
 
         this.broadcast({ type: 'edit-comment', postId, comment }, req.domain);
         res.json(comment);
@@ -1040,8 +1042,7 @@ export default class MessageBoardAgent {
           return res.status(401).json({ error: 'Authentication required' });
         }
         const userAddress = req.me.identityAddress;
-        const data = await this.readData(req.domain);
-        const post = data.posts.find(p => p.id === postId);
+        const post = await this.readPost(req.domain, postId);
         if (!post) return res.status(404).json({ error: 'Post not found' });
 
         const idx = (post.comments || []).findIndex(c => c.id === commentId);
@@ -1055,8 +1056,8 @@ export default class MessageBoardAgent {
         }
 
         post.comments.splice(idx, 1);
+        // Removing a comment doesn't touch the index meta, so write only the body.
         await this.writePost(req.domain, post);
-        await this.writeData(req.domain, data);
 
         this.broadcast({ type: 'delete-comment', postId, commentId }, req.domain);
         res.json({ success: true });
@@ -1068,12 +1069,12 @@ export default class MessageBoardAgent {
 
     // Status endpoint
     router.get('/status', async (req, res) => {
-      const data = await this.readData(req.domain);
+      const index = await this.readIndex(req.domain);
       const boardConfig = req.boardConfig.data.messageBoard;
       res.json({
         agent: 'message-board',
         version: '1.0.0',
-        postCount: data.posts.length,
+        postCount: index.posts.length,
         config: boardConfig
       });
     });
@@ -1318,6 +1319,75 @@ export default class MessageBoardAgent {
   /**
    * Read posts data - loads index and returns posts array with metadata
    */
+  /**
+   * Read just the post index ({ nextId, posts:[{id,timestamp,author,channel}] })
+   * without loading any post bodies. This is what makes paging cheap: the index
+   * carries everything needed to select a page. Falls back to legacy migration
+   * (which writes the index) when no index exists yet.
+   */
+  async readIndex(domain) {
+    const storage = await this.getStorage(domain);
+    try {
+      const indexData = await storage.readFile('posts/index.json');
+      return JSON.parse(indexData.toString());
+    } catch (error) {
+      const data = await this.migrateLegacyData(domain, storage);
+      return {
+        nextId: data.nextId,
+        posts: (data.posts || []).map(p => ({
+          id: p.id,
+          timestamp: p.timestamp,
+          author: p.author,
+          channel: p.channel || null
+        }))
+      };
+    }
+  }
+
+  /**
+   * Read the bodies for a specific list of index metas, preserving their order.
+   * Missing/corrupt files are dropped (logged), same as readData.
+   */
+  async readPostBodies(domain, metas) {
+    const storage = await this.getStorage(domain);
+    const posts = await Promise.all(metas.map(async (meta) => {
+      try {
+        const postData = await storage.readFile(`posts/${meta.id}.json`);
+        return JSON.parse(postData.toString());
+      } catch (error) {
+        console.error(`[message-board] Failed to load post ${meta.id}:`, error.message);
+        return null;
+      }
+    }));
+    return posts.filter(p => p !== null);
+  }
+
+  /**
+   * Enrich posts (and their comments) with the alias name from DomainAcl when
+   * authorName is missing. Address→name only, so shared aliases are fine.
+   */
+  async enrichNames(req, posts) {
+    try {
+      if (req.domainAcl) {
+        const nameMap = await req.domainAcl.getNameMap();
+        const lookup = (addr) => addr ? (nameMap.get(addr.toLowerCase()) || null) : null;
+        return posts.map(post => {
+          const enriched = { ...post, authorName: post.authorName || lookup(post.author) };
+          if (Array.isArray(post.comments)) {
+            enriched.comments = post.comments.map(c => ({
+              ...c,
+              authorName: c.authorName || lookup(c.author)
+            }));
+          }
+          return enriched;
+        });
+      }
+    } catch (e) {
+      console.error('[message-board] Name enrichment failed:', e.message);
+    }
+    return posts;
+  }
+
   async readData(domain) {
     const storage = await this.getStorage(domain);
 
@@ -1392,26 +1462,67 @@ export default class MessageBoardAgent {
   }
 
   /**
-   * Write post data - stores individual post and updates index
+   * Serialize a read-modify-write of the index per domain. Concurrent creates
+   * would otherwise both read the same nextId and one would lose its meta.
    */
-  async writeData(domain, data) {
-    const storage = await this.getStorage(domain);
+  async withIndexLock(domain, fn) {
+    const prev = this.indexLocks.get(domain) || Promise.resolve();
+    const run = prev.then(() => fn());
+    // Keep the chain alive regardless of this op's outcome; callers see `run`.
+    this.indexLocks.set(domain, run.then(() => {}, () => {}));
+    return run;
+  }
 
-    // Build index from current posts
-    const index = {
-      nextId: data.nextId,
-      posts: data.posts.map(p => ({
-        id: p.id,
-        timestamp: p.timestamp,
-        author: p.author,
-        channel: p.channel || null
-      }))
+  // The index entry for a post: everything paging needs without the body.
+  metaOf(post) {
+    return {
+      id: post.id,
+      timestamp: post.timestamp,
+      author: post.author,
+      channel: post.channel || null
     };
+  }
 
-    // Write index
+  /**
+   * Append a new post incrementally: assign the next id, write its body, and
+   * prepend its meta to the index — all under the index lock. `fields` supplies
+   * everything except the id. No full-board read. Used by the HTTP create route
+   * and by mimi.
+   */
+  async createPost(domain, fields) {
+    return this.withIndexLock(domain, async () => {
+      const index = await this.readIndex(domain);
+      const id = index.nextId || (index.posts.reduce((m, p) => Math.max(m, p.id), 0) + 1);
+      const post = { id, ...fields };
+      await this.writePost(domain, post);
+      index.posts.unshift(this.metaOf(post));
+      index.nextId = id + 1;
+      await this.writeIndex(domain, index);
+      return post;
+    });
+  }
+
+  /**
+   * Read a single post body by id, or null if it is missing/corrupt. Lets the
+   * comment/edit routes touch one file instead of loading the whole board.
+   */
+  async readPost(domain, id) {
+    const storage = await this.getStorage(domain);
+    try {
+      const raw = await storage.readFile(`posts/${id}.json`);
+      return JSON.parse(raw.toString());
+    } catch (error) {
+      return null;
+    }
+  }
+
+  /**
+   * Write the post index (posts/index.json). Callers mutate the metas array and
+   * hand the whole index back; this just persists it.
+   */
+  async writeIndex(domain, index) {
+    const storage = await this.getStorage(domain);
     await storage.writeFile('posts/index.json', JSON.stringify(index, null, 2));
-
-    // Note: Individual posts are written via writePost()
   }
 
   /**
@@ -1423,7 +1534,8 @@ export default class MessageBoardAgent {
   }
 
   /**
-   * Delete a single post from storage
+   * Delete a single post's body from storage. The caller removes its index meta
+   * under the index lock.
    */
   async deletePost(domain, postId) {
     const storage = await this.getStorage(domain);
@@ -1515,9 +1627,7 @@ export default class MessageBoardAgent {
    * human permission path.
    */
   async postAsMimi(domain, channel, text) {
-    const data = await this.readData(domain);
-    const post = {
-      id: data.nextId++,
+    const post = await this.createPost(domain, {
       text: String(text).trim(),
       image: null,
       author: await this.getHostIdentity(domain),
@@ -1525,10 +1635,7 @@ export default class MessageBoardAgent {
       timestamp: Date.now(),
       comments: [],
       channel: channel && channel !== 'general' ? channel : null
-    };
-    data.posts.unshift(post);
-    await this.writePost(domain, post);
-    await this.writeData(domain, data);
+    });
     this.broadcast({ type: 'new-post', post }, domain);
     setImmediate(async () => {
       try { await this.addPostToBatch(post, null, domain); }
