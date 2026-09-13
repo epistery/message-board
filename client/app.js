@@ -439,7 +439,7 @@ function renderPost(post) {
           <img src="${avatar}" class="avatar" alt="Avatar">
           <div>
             <div class="post-author">${authorDisplay}</div>
-            <div class="post-time">${timeAgo}${pendingBadge}</div>
+            <div class="post-time"><span class="post-number">#${post.id}</span> · ${timeAgo}${pendingBadge}</div>
           </div>
         </div>
       </div>
@@ -481,7 +481,7 @@ function renderComment(postId, comment) {
         <div class="comment-content">
           <div class="comment-header">
             <span class="comment-author">${authorDisplay}</span>
-            <span class="comment-time">${timeAgo}</span>
+            <span class="comment-time"><span class="post-number">#${postId}.${comment.id}</span> · ${timeAgo}</span>
             <div class="comment-actions">
               <button type="button" class="post-action-btn icon icon-reply" title="Reply" aria-label="Reply" onclick="event.preventDefault();replyToComment(${postId}, '${replyHandle}');return false;"></button>
               ${isOwn ? `<button type="button" class="post-action-btn icon icon-edit" title="Edit" aria-label="Edit" onclick="event.preventDefault();editComment(${postId}, ${comment.id});return false;"></button>` : ''}

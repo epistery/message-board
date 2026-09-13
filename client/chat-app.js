@@ -376,7 +376,7 @@ function renderMessage(post) {
         <div class="message-header">
           <span class="message-author">${mb.escapeHtml(authorDisplay)}</span>
           <span class="clickable-address" onclick="window.copyAddress('${post.author}')" title="${post.author}">${shortAddress}</span>
-          <span class="message-time">${timeAgo}</span>
+          <span class="message-time"><span class="post-number">#${post.id}</span> · ${timeAgo}</span>
         </div>
         <div class="message-text" data-post-text="${post.id}"></div>
         ${imageHtml}
@@ -416,7 +416,7 @@ function renderComment(postId, comment) {
           <div class="comment-header">
             <span class="comment-author">${mb.escapeHtml(authorDisplay)}</span>
             <span class="clickable-address" onclick="window.copyAddress('${comment.author}')" title="${comment.author}">${shortAddress}</span>
-            <span class="comment-time">${timeAgo}</span>
+            <span class="comment-time"><span class="post-number">#${postId}.${comment.id}</span> · ${timeAgo}</span>
             <div class="comment-actions">
               ${canComment ? `<button type="button" class="message-action-btn icon icon-reply" title="Reply" aria-label="Reply" onclick="event.preventDefault();window.replyToComment(${postId}, '${replyHandle}');return false;"></button>` : ''}
               ${isOwn ? `<button type="button" class="message-action-btn icon icon-edit" title="Edit" aria-label="Edit" onclick="event.preventDefault();window.editComment(${postId}, ${comment.id});return false;"></button>` : ''}
